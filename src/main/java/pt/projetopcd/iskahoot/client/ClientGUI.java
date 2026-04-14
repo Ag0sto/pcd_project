@@ -8,11 +8,7 @@ import javax.swing.table.DefaultTableModel;
 public class ClientGUI {
 
     public static void main(String[] args) {
-        javax.swing.SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                new ClientGUI().createAndShowGUI();
-            }
-        });
+        javax.swing.SwingUtilities.invokeLater(() -> new ClientGUI().createAndShowGUI());
     }
 
     public void createAndShowGUI() {
@@ -90,16 +86,20 @@ public class ClientGUI {
 
         // remover completamente a UI do divider
         mainSplit.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
+            @Override
             public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
                 return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
+                    @Override
                     public void setBorder(Border b) {}
                 };
             }
         });
 
         rightSplit.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
+            @Override
             public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
                 return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
+                    @Override
                     public void setBorder(Border b) {}
                 };
             }

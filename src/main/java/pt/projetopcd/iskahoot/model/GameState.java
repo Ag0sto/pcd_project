@@ -1,8 +1,9 @@
 package pt.projetopcd.iskahoot.model;
 
-import pt.projetopcd.iskahoot.server.*;
-
 import java.util.*;
+import pt.projetopcd.iskahoot.server.AnswerManager;
+import pt.projetopcd.iskahoot.server.ScoreManager;
+import pt.projetopcd.iskahoot.server.TimerManager;
 
 public class GameState {
 
@@ -10,12 +11,12 @@ public class GameState {
 
     private Question question;
 
-    private Map<String, Player> players = new HashMap<String, Player>();
-    private Map<String, Team> teams = new HashMap<String, Team>();
+    private final Map<String, Player> players = new HashMap<>();
+    private final Map<String, Team> teams = new HashMap<>();
 
-    private AnswerManager answerManager;
-    private ScoreManager scoreManager;
-    private TimerManager timerManager;
+    private final AnswerManager answerManager;
+    private final ScoreManager scoreManager;
+    private final TimerManager timerManager;
 
     public GameState(String gameId) {
         this.gameId = gameId;
@@ -44,5 +45,17 @@ public class GameState {
 
     public TimerManager getTimerManager() {
         return timerManager;
+    }
+
+    public String getGameId() {
+        return gameId;
+    }
+
+    public Map<String, Player> getPlayers() {
+        return players;
+    }
+
+    public Map<String, Team> getTeams() {
+        return teams;
     }
 }

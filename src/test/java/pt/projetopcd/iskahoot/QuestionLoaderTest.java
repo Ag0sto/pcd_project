@@ -1,12 +1,13 @@
 package pt.projetopcd.iskahoot;
 
-import org.junit.jupiter.api.Test;
 import java.util.List;
 
-import pt.projetopcd.iskahoot.model.Question;
-import pt.projetopcd.iskahoot.server.QuestionLoader;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import pt.projetopcd.iskahoot.model.Question;
+import pt.projetopcd.iskahoot.model.QuestionLoader;
 
 public class QuestionLoaderTest {
 

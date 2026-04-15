@@ -1,16 +1,16 @@
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\GameHandler.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\client\ClientGUI.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\model\Question.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\ScoreManager.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\model\GameState.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\DealWithClient.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\model\QuestionFile.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\concurrency\TeamBarrier.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\model\Team.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\AnswerManager.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\Server.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\QuestionLoader.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\server\TimerManager.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\client\Client.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\concurrency\ModifiedCountDownLatch.java
-C:\Users\tiago\Desktop\ISCTE\iskahoot\src\main\java\pt\projetopcd\iskahoot\model\Player.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/client/Client.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/model/Player.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/model/Team.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/Server.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/model/QuestionLoader.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/ScoreManager.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/model/Question.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/concurrency/TeamBarrier.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/DealWithClient.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/concurrency/ModifiedCountDownLatch.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/GameHandler.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/AnswerManager.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/GameState.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/server/TimerManager.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/model/QuestionFile.java
+/home/kali/Área de Trabalho/ProjetoPcd/pcd_project/src/main/java/pt/projetopcd/iskahoot/client/ClientGUI.java

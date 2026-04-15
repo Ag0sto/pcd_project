@@ -1,4 +1,4 @@
-package pt.projetopcd.iskahoot.server;
+package pt.projetopcd.iskahoot.model;
 
 import java.io.FileReader;
 import java.io.Reader;
@@ -6,14 +6,11 @@ import java.util.List;
 
 import com.google.gson.Gson;
 
-import pt.projetopcd.iskahoot.model.Question;
-import pt.projetopcd.iskahoot.model.QuestionFile;
-
 public class QuestionLoader {
 
     public static List<Question> loadQuestions() {
         Gson gson = new Gson();
-        String file = "src\\main\\resources\\quizzes.json";
+        String file = "src/main/resources/quizzes.json";
 
         try (Reader reader = new FileReader(file)) {
 

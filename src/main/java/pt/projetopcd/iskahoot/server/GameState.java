@@ -1,9 +1,11 @@
-package pt.projetopcd.iskahoot.model;
+package pt.projetopcd.iskahoot.server;
 
-import java.util.*;
-import pt.projetopcd.iskahoot.server.AnswerManager;
-import pt.projetopcd.iskahoot.server.ScoreManager;
-import pt.projetopcd.iskahoot.server.TimerManager;
+import java.util.HashMap;
+import java.util.Map;
+
+import pt.projetopcd.iskahoot.model.Player;
+import pt.projetopcd.iskahoot.model.Question;
+import pt.projetopcd.iskahoot.model.Team;
 
 public class GameState {
 

@@ -29,6 +29,7 @@ public class Client {
             } catch (IOException e) {//...
             }
         }
+
     }
 
     void connectToServer() throws IOException {

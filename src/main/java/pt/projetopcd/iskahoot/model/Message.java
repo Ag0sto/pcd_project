@@ -1,4 +1,4 @@
-package pt.projetopcd.iskahoot.network;
+package pt.projetopcd.iskahoot.model;
 
 import java.io.Serializable;
 

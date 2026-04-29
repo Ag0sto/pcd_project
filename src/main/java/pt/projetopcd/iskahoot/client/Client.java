@@ -1,6 +1,6 @@
 package pt.projetopcd.iskahoot.client;
 
-import pt.projetopcd.iskahoot.network.Message;
+import pt.projetopcd.iskahoot.model.Message;
 import pt.projetopcd.iskahoot.server.Server;
 
 import java.io.IOException;

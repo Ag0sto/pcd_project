@@ -1,21 +1,23 @@
 
 package pt.projetopcd.iskahoot.model;
 
-public class Player {
+import java.io.Serializable;
 
-    private String id;
+public class Player implements Serializable {
+
+    private int id;
     private String name;
     private int score;
-    private Team team;
+    private String teamname;
 
-    public Player(String id, String name, Team team) {
+    public Player(int id, String name, String teamname) {
         this.id = id;
         this.name = name;
         this.score = 0;
-        this.team = team;
+        this.teamname = teamname;
     }
 
-    public String getId() {
+    public int getId() {
         return id;
     }
 
@@ -31,7 +33,7 @@ public class Player {
         this.score += points;
     }
 
-    public Team getTeam() {
-        return team;
+    public String getTeam() {
+        return teamname;
     }
 }

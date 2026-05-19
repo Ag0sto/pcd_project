@@ -1,13 +1,31 @@
 package pt.projetopcd.iskahoot.client;
 
-import pt.projetopcd.iskahoot.model.Player;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.GridLayout;
+import java.awt.Insets;
+import java.util.List;
 
-import java.awt.*;
-
-import javax.swing.*;
-
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
+import javax.swing.JTable;
+import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.border.Border;
 import javax.swing.table.DefaultTableModel;
+
+import pt.projetopcd.iskahoot.model.Player;
+import pt.projetopcd.iskahoot.model.Question;
+import pt.projetopcd.iskahoot.model.QuestionLoader;
 
 public class ClientGUI {
 
@@ -18,10 +36,26 @@ public class ClientGUI {
 
     private JLabel playerInfoLabel;
     private JLabel timerLabel;
+    private JButton[] answerButtons = new JButton[4];
+    private JLabel questionLabel;
 
     public static void main(String[] args) {
-        javax.swing.SwingUtilities.invokeLater(() -> new ClientGUI().showLoginScreen());
-    }
+
+    SwingUtilities.invokeLater(() -> {
+
+        ClientGUI gui = new ClientGUI();
+
+        gui.buildFrame();
+
+        gui.cardLayout.show(gui.mainPanel, "GAME");
+
+        gui.frame.setVisible(true);
+
+        List<Question> questions = QuestionLoader.loadQuestions();
+
+        gui.showQuestion(questions.get(0));
+    });
+}
 
     public void showGameScreen(Player player) {
         this.player = player;
@@ -153,14 +187,25 @@ public class ClientGUI {
         // Painel esquerdo — botões de resposta
         JPanel leftPanel = new JPanel(new GridLayout(5, 1, 5, 5));
         leftPanel.setBorder(BorderFactory.createTitledBorder("Perguntas"));
-        for (int i = 1; i <= 4; i++) {
-            leftPanel.add(new JButton(String.valueOf(i)));
+        questionLabel = new JLabel("Pergunta aparece aqui", SwingConstants.CENTER);
+        questionLabel.setFont(questionLabel.getFont().deriveFont(20f));
+        leftPanel.add(questionLabel);
+        for (int i = 0; i < 4; i++) {
+
+            JButton button = new JButton("Option " + (i + 1));
+
+            answerButtons[i] = button;
+
+             leftPanel.add(button);
         }
 
         // Painel central — título + timer
-        JPanel centerPanel = new JPanel(new GridLayout(2, 1));
-        JLabel kahootLabel = new JLabel("Kahoot!", SwingConstants.CENTER);
+        JPanel centerPanel = new JPanel(new GridLayout(3, 1));
+
+        JLabel kahootLabel = new JLabel("Kahoot!", SwingConstants.CENTER);  
+
         timerLabel = new JLabel("Timer: --", SwingConstants.CENTER);
+
         centerPanel.add(kahootLabel);
         centerPanel.add(timerLabel);
 
@@ -207,109 +252,19 @@ public class ClientGUI {
             }
         });
     }
-    /*public void createAndShowGUI() {
+    public void showQuestion(Question question) {
 
-        UIManager.put("SplitPane.border", BorderFactory.createEmptyBorder());
-        UIManager.put("SplitPaneDivider.border", BorderFactory.createEmptyBorder());
+    SwingUtilities.invokeLater(() -> {
 
-        JFrame frame = new JFrame("Kahoot Client");
-        frame.setSize(800, 300);
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setLayout(new BorderLayout());
+        questionLabel.setText(question.getQuestion());
 
-        // Left panel with question buttons
-        JPanel leftPanel = new JPanel();
-        leftPanel.setLayout(new GridLayout(5, 1,5,5));
-        leftPanel.setBorder(BorderFactory.createTitledBorder("Perguntas"));
+        List<String> options = question.getOptions();
 
-        for (int i = 1; i <= 4; i++) {
-            JButton questionButton = new JButton(String.valueOf(i));
-            leftPanel.add(questionButton);
+        for (int i = 0; i < answerButtons.length; i++) {
+
+            answerButtons[i].setText(options.get(i));
         }
 
-        // Center panel with game info
-        JPanel centerPanel = new JPanel();
-        centerPanel.setLayout(new GridLayout(2,1));
-
-        JLabel kahootLabel = new JLabel("Kahoot!");
-        kahootLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        JLabel timerLabel = new JLabel("Timer: ");
-        timerLabel.setHorizontalAlignment(SwingConstants.CENTER);
-
-
-        centerPanel.add(kahootLabel);
-        centerPanel.add(Box.createRigidArea(new Dimension(0, 20)));
-        centerPanel.add(timerLabel);
-
-        // Right panel with scores
-        String[] columns = {"Team", "Score", "Last round points"};
-        DefaultTableModel model = new DefaultTableModel(columns, 0);
-        JTable table = new JTable(model);
-
-        JScrollPane scrollPane = new JScrollPane(table);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Scores"));
-
-        // Add panels to frame
-        // Split 1: center + right
-        JSplitPane rightSplit = new JSplitPane(
-                JSplitPane.HORIZONTAL_SPLIT,
-                centerPanel,
-                scrollPane
-        );
-        rightSplit.setResizeWeight(0.6);
-        rightSplit.setDividerSize(0);
-        rightSplit.setBorder(null);
-        rightSplit.setEnabled(false);
-
-        // Split 2: left + (center + right)
-        JSplitPane mainSplit = new JSplitPane(
-                JSplitPane.HORIZONTAL_SPLIT,
-                leftPanel,
-                rightSplit
-        );
-        mainSplit.setResizeWeight(0.3);
-        mainSplit.setDividerSize(0);
-        mainSplit.setBorder(null);
-        mainSplit.setEnabled(false);
-
-        frame.add(mainSplit, BorderLayout.CENTER);
-
-        // Set initial divider positions
-        SwingUtilities.invokeLater(() -> {
-            mainSplit.setDividerLocation(0.58);
-            rightSplit.setDividerLocation(0.16);
-        });
-
-        // remover completamente a UI do divider
-        mainSplit.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
-            @Override
-            public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
-                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
-                    @Override
-                    public void setBorder(Border b) {}
-                };
-            }
-        });
-
-        rightSplit.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
-            @Override
-            public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
-                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
-                    @Override
-                    public void setBorder(Border b) {}
-                };
-            }
-        });
-
-        frame.setVisible(true);
-
-        new Thread(() -> {
-            int timer = 20;
-            while (timer >= 0) {
-                timerLabel.setText("Timer: " + timer);
-                timer--;
-                try {Thread.sleep(1000);} catch (InterruptedException e) {}
-            }
-        }).start();
-    }*/
+    });
+    }
 }

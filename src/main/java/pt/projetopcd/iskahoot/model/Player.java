@@ -17,6 +17,8 @@ public class Player implements Serializable {
         this.teamname = teamname;
     }
 
+    public void setId(int id) {this.id = id;}
+
     public int getId() {
         return id;
     }

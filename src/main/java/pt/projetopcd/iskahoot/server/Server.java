@@ -1,6 +1,6 @@
 package pt.projetopcd.iskahoot.server;
 
-import pt.projetopcd.iskahoot.model.Message;
+import pt.projetopcd.iskahoot.model.Player;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -8,6 +8,7 @@ import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Server {
 
@@ -26,26 +27,28 @@ public class Server {
             in = new ObjectInputStream(socket.getInputStream());
         }
 
-        private void handleMessages() throws IOException, ClassNotFoundException {
-            while (true) {
-                Message msg = (Message) in.readObject();
-                if (msg.getText().equals("FIM"))
-                    break;
-                System.out.println("Eco:" + msg.text);
-                out.writeObject(msg);
-            }
+        private void handlePlayer() throws IOException, ClassNotFoundException {
+
+                Player player = (Player) in.readObject();
+
+                player.setId(newId.getAndIncrement());
+
+                System.out.println("Player " + player.getName() + " Id: " + player.getId() + " entrou com a equipa " + player.getTeam());
+
+                out.writeObject(player);
         }
 
         @Override
         public void run() {
             try {
-                handleMessages();
+                handlePlayer();
             } catch (IOException | ClassNotFoundException e) {
                 e.printStackTrace();
             }
         }
     }
 
+    private final AtomicInteger newId = new AtomicInteger(1);
     public static final int PORTO = 8080;
     private ArrayList<ObjectOutputStream> clients = new ArrayList<>();
 
@@ -56,9 +59,9 @@ public class Server {
     public synchronized void removeClient(ObjectOutputStream out){
         clients.remove(out);
     }
-    public synchronized void sendToAll(Message msg) throws IOException{
+    public synchronized void sendToAll(Player player) throws IOException{
         for (ObjectOutputStream out : clients) {
-            out.writeObject(msg);
+            out.writeObject(player);
         }
     }
     public static void main(String[] args) {

@@ -1,91 +1,202 @@
 package pt.projetopcd.iskahoot.server;
 
-import pt.projetopcd.iskahoot.model.Player;
-
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Map;
+import java.util.Scanner;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Servidor IsKahoot.
+ *
+ * Lançamento: sem argumentos — o servidor fica à escuta e aguarda comandos na
+ * TUI para criar jogos.
+ *
+ * TUI: new <numEquipas> <jogadoresPorEquipa> <numPerguntas>
+ * → cria um novo jogo e imprime o código gerado list → lista jogos ativos com
+ * estado e pontuações quit → encerra o servidor
+ */
 public class Server {
 
-    public class DealWithCLient extends Thread{
-        public DealWithCLient(Socket socket) throws IOException {
-            doConnections(socket);
-        }
-
-        private ObjectInputStream in;
-
-        private ObjectOutputStream out;
-
-        void doConnections(Socket socket) throws IOException {
-
-            out = new ObjectOutputStream(socket.getOutputStream());
-            in = new ObjectInputStream(socket.getInputStream());
-        }
-
-        private void handlePlayer() throws IOException, ClassNotFoundException {
-
-                Player player = (Player) in.readObject();
-
-                player.setId(newId.getAndIncrement());
-
-                System.out.println("Player " + player.getName() + " Id: " + player.getId() + " entrou com a equipa " + player.getTeam());
-
-                out.writeObject(player);
-        }
-
-        @Override
-        public void run() {
-            try {
-                handlePlayer();
-            } catch (IOException | ClassNotFoundException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    private final AtomicInteger newId = new AtomicInteger(1);
     public static final int PORTO = 8080;
-    private ArrayList<ObjectOutputStream> clients = new ArrayList<>();
 
-    public synchronized void addClient(ObjectOutputStream out){
-        clients.add(out);
+    // Jogos ativos: gameId -> GameState
+    private static final Map<String, GameState> games = new ConcurrentHashMap<>();
+    // Notificações de jogadores para iniciar jogos
+    private static final Map<String, Object> gameLocks = new ConcurrentHashMap<>();
+
+    // -------------------------------------------------------
+    // API estática usada por DealWithClient e GameHandler
+    // -------------------------------------------------------
+    public static GameState getGame(String gameId) {
+        return games.get(gameId);
     }
 
-    public synchronized void removeClient(ObjectOutputStream out){
-        clients.remove(out);
+    public static void removeGame(String gameId) {
+        games.remove(gameId);
+        gameLocks.remove(gameId);
+        System.out.println("[Server] Jogo " + gameId + " removido.");
     }
-    public synchronized void sendToAll(Player player) throws IOException{
-        for (ObjectOutputStream out : clients) {
-            out.writeObject(player);
+
+    /**
+     * Chamado por DealWithClient quando um jogador se regista. Se o jogo
+     * estiver completo, lança o GameHandler.
+     */
+    public static void notifyPlayerJoined(String gameId) {
+        Object lock = gameLocks.get(gameId);
+        if (lock == null) {
+            return;
+        }
+        synchronized (lock) {
+            lock.notifyAll();
         }
     }
-    public static void main(String[] args) {
-        try {
-            new Server().startServing();
-        } catch (IOException e) {
-            // ...
-        }
-    }
 
-    public void startServing() throws IOException {
-        ServerSocket ss = new ServerSocket(PORTO);
-        try {
-            while(true){
-                System.out.println("Esperando ligações ...");
-                Socket socket = ss.accept();
-                try {//Conexao aceite
-                    new DealWithCLient(socket).start();
-                } finally {//a fechar
-                    //socket.close();
+    // -------------------------------------------------------
+    // Criação de jogos
+    // -------------------------------------------------------
+    private String createGame(int numTeams, int playersPerTeam, int numQuestions) {
+        String gameId = generateGameId();
+        GameState gs = new GameState(gameId, numTeams, playersPerTeam, numQuestions);
+        Object lock = new Object();
+        games.put(gameId, gs);
+        gameLocks.put(gameId, lock);
+
+        System.out.println("[Server] Jogo criado: " + gameId
+                + " (" + numTeams + " equipas x " + playersPerTeam
+                + " jogadores, " + numQuestions + " perguntas)");
+
+        // Thread que aguarda todos os jogadores e depois lança o GameHandler
+        Thread waiter = new Thread(() -> {
+            synchronized (lock) {
+                while (games.containsKey(gameId) && !gs.isFull()) {
+                    try {
+                        lock.wait();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
             }
-        } finally {
-            ss.close();
+            if (!games.containsKey(gameId)) {
+                return; // jogo cancelado
+            }
+            System.out.println("[Server] Jogo " + gameId + " completo! A iniciar GameHandler...");
+            new GameHandler(gs).start();
+        });
+        waiter.setDaemon(true);
+        waiter.start();
+
+        return gameId;
+    }
+
+    private static int gameCounter = 1000;
+
+    private static synchronized String generateGameId() {
+        return "GAME-" + (gameCounter++);
+    }
+
+    // -------------------------------------------------------
+    // Aceitar conexões (loop principal de rede)
+    // -------------------------------------------------------
+    private void acceptConnections() {
+        try (ServerSocket ss = new ServerSocket(PORTO)) {
+            System.out.println("[Server] A escutar no porto " + PORTO);
+            ss.setSoTimeout(0); // bloqueia indefinidamente
+            while (true) {
+                Socket socket = ss.accept();
+                DealWithClient dwc = new DealWithClient(socket);
+                dwc.start();
+            }
+        } catch (IOException e) {
+            System.err.println("[Server] Erro: " + e.getMessage());
         }
+    }
+
+    // -------------------------------------------------------
+    // TUI
+    // -------------------------------------------------------
+    private void runTUI() {
+        Scanner sc = new Scanner(System.in);
+        printHelp();
+
+        while (sc.hasNextLine()) {
+            String line = sc.nextLine().trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+
+            String[] parts = line.split("\\s+");
+            String cmd = parts[0].toLowerCase();
+
+            switch (cmd) {
+                case "new": {
+                    if (parts.length < 4) {
+                        System.out.println("Uso: new <numEquipas> <jogadoresPorEquipa> <numPerguntas>");
+                        break;
+                    }
+                    try {
+                        int nt = Integer.parseInt(parts[1]);
+                        int pp = Integer.parseInt(parts[2]);
+                        int nq = Integer.parseInt(parts[3]);
+                        String id = createGame(nt, pp, nq);
+                        System.out.println(">>> Código do jogo: " + id
+                                + "  (aguardando " + (nt * pp) + " jogadores)");
+                    } catch (NumberFormatException e) {
+                        System.out.println("Argumentos inválidos.");
+                    }
+                    break;
+                }
+                case "list": {
+                    if (games.isEmpty()) {
+                        System.out.println("Nenhum jogo ativo.");
+                    } else {
+                        for (GameState gs : games.values()) {
+                            System.out.printf("  Jogo %-10s | %d/%d jogadores | Pontuações: %s%n",
+                                    gs.getGameId(),
+                                    gs.getRegisteredCount(),
+                                    gs.getExpectedPlayers(),
+                                    gs.getTotalTeamScores());
+                        }
+                    }
+                    break;
+                }
+                case "quit":
+                case "exit": {
+                    System.out.println("A encerrar servidor...");
+                    System.exit(0);
+                    break;
+                }
+                case "help":
+                    printHelp();
+                    break;
+                default:
+                    System.out.println("Comando desconhecido. Tente 'help'.");
+            }
+        }
+    }
+
+    private static void printHelp() {
+        System.out.println("=== IsKahoot Server ===");
+        System.out.println("  new <numEquipas> <jogadoresPorEquipa> <numPerguntas>  - cria novo jogo");
+        System.out.println("  list   - lista jogos ativos");
+        System.out.println("  quit   - encerra o servidor");
+        System.out.println("  help   - mostra esta ajuda");
+    }
+
+    // -------------------------------------------------------
+    // Main
+    // -------------------------------------------------------
+    public static void main(String[] args) {
+        Server server = new Server();
+
+        // Thread de rede em background
+        Thread netThread = new Thread(server::acceptConnections);
+        netThread.setDaemon(true);
+        netThread.start();
+
+        // TUI na thread principal
+        server.runTUI();
     }
 }

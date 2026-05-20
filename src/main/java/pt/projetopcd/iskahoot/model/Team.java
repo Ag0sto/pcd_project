@@ -29,7 +29,7 @@ public class Team implements Serializable {
     }
 
     public void addScore(Player player, int points) {
-        if(players.contains(player)) {
+        if (players.contains(player)) {
             player.addScore(points);
         }
         this.score += points;

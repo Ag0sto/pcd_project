@@ -1,43 +1,96 @@
 package pt.projetopcd.iskahoot.client;
 
-import pt.projetopcd.iskahoot.model.Player;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.GridLayout;
+import java.awt.Insets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
-import java.awt.*;
-
-import javax.swing.*;
-
-import javax.swing.border.Border;
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.table.DefaultTableModel;
 
+import pt.projetopcd.iskahoot.model.Message;
+import pt.projetopcd.iskahoot.model.Player;
+
+/**
+ * Interface gráfica do cliente IsKahoot.
+ *
+ * Ecrãs (CardLayout): LOGIN - campos: gameId, equipa, username; botão ligar
+ * WAITING - mensagem de espera até o jogo começar GAME - pergunta + opções +
+ * timer + placar RESULT - resultado da ronda (resposta certa, pontos) END -
+ * ecrã de fim de jogo com vencedor
+ */
 public class ClientGUI {
 
-    private Player player;
+    // -------------------------------------------------------
+    // Componentes principais
+    // -------------------------------------------------------
     private JFrame frame;
     private JPanel mainPanel;
     private CardLayout cardLayout;
 
-    private JLabel playerInfoLabel;
+    // LOGIN
+    private JTextField loginGameIdField, loginTeamField, loginUsernameField;
+    private JLabel loginStatusLabel;
+    private JButton loginConnectBtn;
+
+    // WAITING
+    private JLabel waitingLabel;
+
+    // GAME
+    private JLabel questionLabel;
+    private JLabel questionInfoLabel;  // "Pergunta 2/7 [EQUIPA] (5 pts)"
     private JLabel timerLabel;
+    private JButton[] answerButtons;
+    private JLabel playerInfoLabel;
+    private DefaultTableModel scoreTableModel;
 
+    // RESULT
+    private JLabel resultTitleLabel;
+    private JLabel resultCorrectLabel;
+    private JTextArea resultScoreArea;
+
+    // END
+    private JLabel endWinnerLabel;
+    private JTextArea endScoreArea;
+
+    // -------------------------------------------------------
+    // Estado
+    // -------------------------------------------------------
+    private Player me;
+    private Client client;
+    private javax.swing.Timer countdownTimer;
+    private int timeLeft;
+    private Message.QuestionMsg currentQuestion;
+    private volatile boolean answered;
+
+    // -------------------------------------------------------
+    // Construção
+    // -------------------------------------------------------
     public static void main(String[] args) {
-        javax.swing.SwingUtilities.invokeLater(() -> new ClientGUI().showLoginScreen());
-    }
-
-    public void showGameScreen(Player player) {
-        this.player = player;
-        SwingUtilities.invokeLater(() -> {
-            if (frame == null) buildFrame();
-            playerInfoLabel.setText(
-                    "Jogador: " + player.getName() +
-                            " (ID: " + player.getId() + ")  |  Equipa: " + player.getTeam()
-            );
-            cardLayout.show(mainPanel, "GAME");
-            frame.setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new ClientGUI().showLoginScreen());
     }
 
     /**
-     * Mostra o ecrã de login. Útil quando a GUI é iniciada de forma autónoma.
+     * Mostra o ecrã de login com campos vazios.
      */
     public void showLoginScreen() {
         SwingUtilities.invokeLater(() -> {
@@ -47,269 +100,485 @@ public class ClientGUI {
         });
     }
 
-    // ------------------------------------------------------------------
-    // Construção da janela principal
-    // ------------------------------------------------------------------
-    private void buildFrame() {
-        UIManager.put("SplitPane.border", BorderFactory.createEmptyBorder());
-        UIManager.put("SplitPaneDivider.border", BorderFactory.createEmptyBorder());
+    /**
+     * Preenche os campos de login com valores vindos dos argumentos (modo cmd).
+     */
+    public void showLoginScreen(String gameId, String team, String username) {
+        SwingUtilities.invokeLater(() -> {
+            buildFrame();
+            loginGameIdField.setText(gameId);
+            loginTeamField.setText(team);
+            loginUsernameField.setText(username);
+            cardLayout.show(mainPanel, "LOGIN");
+            frame.setVisible(true);
+        });
+    }
 
-        frame = new JFrame("isKahoot! Client");
-        frame.setSize(800, 400);
+    public void showGameScreen(Player player) {
+        this.me = player;
+        SwingUtilities.invokeLater(() -> {
+            playerInfoLabel.setText(
+                    "Jogador: " + player.getName() + "  |  Equipa: " + player.getTeam()
+            );
+            cardLayout.show(mainPanel, "WAITING");
+            frame.setVisible(true);
+        });
+    }
+
+    public void showWaiting(String msg) {
+        SwingUtilities.invokeLater(() -> {
+            waitingLabel.setText("<html><center>" + msg + "</center></html>");
+            cardLayout.show(mainPanel, "WAITING");
+        });
+    }
+
+    public void showError(String msg) {
+        SwingUtilities.invokeLater(() -> {
+            loginStatusLabel.setText("<html><font color='red'>" + msg + "</font></html>");
+            if (loginConnectBtn != null) {
+                loginConnectBtn.setEnabled(true);
+            }
+        });
+    }
+
+    public void showQuestion(Message.QuestionMsg q) {
+        SwingUtilities.invokeLater(() -> {
+            currentQuestion = q;
+            answered = false;
+
+            // Atualiza pergunta e informação
+            questionLabel.setText("<html><center>" + q.questionText + "</center></html>");
+            questionInfoLabel.setText("Pergunta " + q.questionNumber + "/" + q.totalQuestions
+                    + (q.isTeamRound ? "  [RONDA DE EQUIPA]" : "  [INDIVIDUAL]")
+                    + "  •  " + q.points + " pts");
+
+            // Botões de resposta
+            List<String> opts = q.options;
+            for (int i = 0; i < answerButtons.length; i++) {
+                if (i < opts.size()) {
+                    answerButtons[i].setText("<html>" + opts.get(i) + "</html>");
+                    answerButtons[i].setEnabled(true);
+                    answerButtons[i].setBackground(getOptionColor(i));
+                } else {
+                    answerButtons[i].setText("");
+                    answerButtons[i].setEnabled(false);
+                }
+            }
+
+            // Timer
+            startCountdown(q.timeLimitSeconds);
+
+            cardLayout.show(mainPanel, "GAME");
+        });
+    }
+
+    public void showRoundResult(Message.RoundResult r) {
+        SwingUtilities.invokeLater(() -> {
+            stopCountdown();
+
+            // Destaca a opção correta nos botões
+            if (currentQuestion != null) {
+                for (int i = 0; i < answerButtons.length; i++) {
+                    if (i < currentQuestion.options.size()) {
+                        answerButtons[i].setEnabled(false);
+                        answerButtons[i].setBackground(
+                                i == r.correctOption ? new Color(0x4CAF50) : new Color(0xF44336)
+                        );
+                    }
+                }
+            }
+
+            // Mostra no ecrã de resultado
+            resultTitleLabel.setText(answered
+                    ? "Fim da Ronda!"
+                    : "Tempo esgotado!");
+            resultCorrectLabel.setText("Resposta correta: "
+                    + (currentQuestion != null ? currentQuestion.options.get(r.correctOption) : r.correctOption));
+
+            StringBuilder sb = new StringBuilder("Pontuações:\n");
+            r.teamScores.entrySet().stream()
+                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                    .forEach(e -> {
+                        int round = r.roundPoints.getOrDefault(e.getKey(), 0);
+                        sb.append(String.format("  %-15s  Total: %4d  (+%d esta ronda)%n",
+                                e.getKey(), e.getValue(), round));
+                    });
+            resultScoreArea.setText(sb.toString());
+
+            // Atualiza tabela de scores
+            updateScoreTable(r.teamScores, r.roundPoints);
+
+            cardLayout.show(mainPanel, "RESULT");
+        });
+    }
+
+    public void showGameEnd(Message.RoundResult r) {
+        SwingUtilities.invokeLater(() -> {
+            stopCountdown();
+
+            endWinnerLabel.setText("🏆 Vencedor: " + r.winnerTeam + " 🏆");
+
+            StringBuilder sb = new StringBuilder("Classificação final:\n\n");
+            List<Map.Entry<String, Integer>> sorted = new ArrayList<>(r.teamScores.entrySet());
+            sorted.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
+            int rank = 1;
+            for (Map.Entry<String, Integer> e : sorted) {
+                sb.append(String.format("  %d. %-15s  %d pts%n", rank++, e.getKey(), e.getValue()));
+            }
+            endScoreArea.setText(sb.toString());
+
+            cardLayout.show(mainPanel, "END");
+        });
+    }
+
+    // -------------------------------------------------------
+    // Timer
+    // -------------------------------------------------------
+    private void startCountdown(int seconds) {
+        stopCountdown();
+        timeLeft = seconds;
+        timerLabel.setText("⏱ " + timeLeft + "s");
+
+        countdownTimer = new javax.swing.Timer(1000, e -> {
+            timeLeft--;
+            timerLabel.setText("⏱ " + timeLeft + "s");
+            timerLabel.setForeground(timeLeft <= 5 ? Color.RED : Color.BLACK);
+            if (timeLeft <= 0) {
+                stopCountdown();
+            }
+        });
+        countdownTimer.start();
+    }
+
+    private void stopCountdown() {
+        if (countdownTimer != null) {
+            countdownTimer.stop();
+            countdownTimer = null;
+        }
+    }
+
+    // -------------------------------------------------------
+    // Construção da frame
+    // -------------------------------------------------------
+    private void buildFrame() {
+        if (frame != null) {
+            return;
+        }
+
+        frame = new JFrame("IsKahoot!");
+        frame.setSize(900, 550);
+        frame.setMinimumSize(new Dimension(700, 400));
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setLocationRelativeTo(null);
 
         cardLayout = new CardLayout();
         mainPanel = new JPanel(cardLayout);
+
         mainPanel.add(buildLoginPanel(), "LOGIN");
-        mainPanel.add(buildGamePanel(),  "GAME");
+        mainPanel.add(buildWaitingPanel(), "WAITING");
+        mainPanel.add(buildGamePanel(), "GAME");
+        mainPanel.add(buildResultPanel(), "RESULT");
+        mainPanel.add(buildEndPanel(), "END");
 
         frame.add(mainPanel);
     }
 
-    // ------------------------------------------------------------------
-    // Ecrã de Login
-    // ------------------------------------------------------------------
+    // -------------------------------------------------------
+    // LOGIN
+    // -------------------------------------------------------
     private JPanel buildLoginPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBorder(BorderFactory.createEmptyBorder(20, 60, 20, 60));
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(8, 8, 8, 8);
-        gbc.fill = GridBagConstraints.HORIZONTAL;
+        panel.setBorder(BorderFactory.createEmptyBorder(30, 80, 30, 80));
+        panel.setBackground(new Color(0x2C3E50));
+        GridBagConstraints g = new GridBagConstraints();
+        g.insets = new Insets(8, 8, 8, 8);
+        g.fill = GridBagConstraints.HORIZONTAL;
 
-        // Título
-        JLabel title = new JLabel("isKahoot!", SwingConstants.CENTER);
-        title.setFont(title.getFont().deriveFont(28f));
-        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2;
-        panel.add(title, gbc);
+        JLabel title = new JLabel("IsKahoot!", SwingConstants.CENTER);
+        title.setFont(new Font("SansSerif", Font.BOLD, 36));
+        title.setForeground(Color.WHITE);
+        g.gridx = 0;
+        g.gridy = 0;
+        g.gridwidth = 2;
+        panel.add(title, g);
 
-        gbc.gridwidth = 1;
+        g.gridwidth = 1;
+        Font labelFont = new Font("SansSerif", Font.PLAIN, 14);
+        Color labelColor = new Color(0xECF0F1);
 
-        // Campo nome
-        gbc.gridx = 0; gbc.gridy = 1;
-        panel.add(new JLabel("Nome do Jogador:"), gbc);
-        JTextField nameField = new JTextField(20);
-        gbc.gridx = 1;
-        panel.add(nameField, gbc);
+        JLabel l1 = new JLabel("Código do Jogo:");
+        l1.setFont(labelFont);
+        l1.setForeground(labelColor);
+        g.gridx = 0;
+        g.gridy = 1;
+        panel.add(l1, g);
+        loginGameIdField = new JTextField(20);
+        g.gridx = 1;
+        panel.add(loginGameIdField, g);
 
-        // Campo equipa
-        gbc.gridx = 0; gbc.gridy = 2;
-        panel.add(new JLabel("Nome da Equipa:"), gbc);
-        JTextField teamField = new JTextField(20);
-        gbc.gridx = 1;
-        panel.add(teamField, gbc);
+        JLabel l2 = new JLabel("Equipa:");
+        l2.setFont(labelFont);
+        l2.setForeground(labelColor);
+        g.gridx = 0;
+        g.gridy = 2;
+        panel.add(l2, g);
+        loginTeamField = new JTextField(20);
+        g.gridx = 1;
+        panel.add(loginTeamField, g);
 
-        // Botão ligar
-        JButton connectButton = new JButton("Ligar ao Servidor");
-        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 2;
-        panel.add(connectButton, gbc);
+        JLabel l3 = new JLabel("Nome do Jogador:");
+        l3.setFont(labelFont);
+        l3.setForeground(labelColor);
+        g.gridx = 0;
+        g.gridy = 3;
+        panel.add(l3, g);
+        loginUsernameField = new JTextField(20);
+        g.gridx = 1;
+        panel.add(loginUsernameField, g);
 
-        // Label de estado
-        JLabel statusLabel = new JLabel("", SwingConstants.CENTER);
-        gbc.gridy = 4;
-        panel.add(statusLabel, gbc);
+        loginConnectBtn = new JButton("Entrar no Jogo");
+        loginConnectBtn.setFont(new Font("SansSerif", Font.BOLD, 15));
+        loginConnectBtn.setBackground(new Color(0x27AE60));
+        loginConnectBtn.setForeground(Color.WHITE);
+        loginConnectBtn.setFocusPainted(false);
+        g.gridx = 0;
+        g.gridy = 4;
+        g.gridwidth = 2;
+        panel.add(loginConnectBtn, g);
 
-        connectButton.addActionListener(e -> {
-            String name = nameField.getText().trim();
-            String team = teamField.getText().trim();
-            if (name.isEmpty() || team.isEmpty()) {
-                statusLabel.setText("Preenche o nome e a equipa.");
+        loginStatusLabel = new JLabel("", SwingConstants.CENTER);
+        loginStatusLabel.setForeground(new Color(0xE74C3C));
+        g.gridy = 5;
+        panel.add(loginStatusLabel, g);
+
+        loginConnectBtn.addActionListener(e -> {
+            String gameId = loginGameIdField.getText().trim();
+            String team = loginTeamField.getText().trim();
+            String username = loginUsernameField.getText().trim();
+
+            if (gameId.isEmpty() || team.isEmpty() || username.isEmpty()) {
+                loginStatusLabel.setText("Preenche todos os campos.");
                 return;
             }
-            connectButton.setEnabled(false);
-            statusLabel.setText("A ligar ao servidor...");
+            loginConnectBtn.setEnabled(false);
+            loginStatusLabel.setText("A ligar...");
 
-            // Corre o Client numa thread separada para não bloquear a EDT
-            new Thread(() -> {
-                Client client = new Client(this);
-                try {
-                    client.connectToServer();
-                    client.createPlayer(name,team);
-                    client.sendPlayers();
-                    // showGameScreen() é chamado dentro de sendPlayer()
-                    // após receber o Player com id do servidor
-                } catch (Exception ex) {
-                    SwingUtilities.invokeLater(() -> {
-                        statusLabel.setText("Erro ao ligar: " + ex.getMessage());
-                        connectButton.setEnabled(true);
-                    });
-                }
-            }).start();
+            client = new Client(this);
+            new Thread(() -> client.connect(gameId, team, username)).start();
         });
 
         return panel;
     }
 
-    // ------------------------------------------------------------------
-    // Ecrã de Jogo
-    // ------------------------------------------------------------------
-    private JPanel buildGamePanel() {
-        JPanel wrapper = new JPanel(new BorderLayout());
+    // -------------------------------------------------------
+    // WAITING
+    // -------------------------------------------------------
+    private JPanel buildWaitingPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(new Color(0x2980B9));
 
-        // Barra superior com info do jogador
+        waitingLabel = new JLabel("A aguardar os outros jogadores...", SwingConstants.CENTER);
+        waitingLabel.setFont(new Font("SansSerif", Font.BOLD, 22));
+        waitingLabel.setForeground(Color.WHITE);
+        panel.add(waitingLabel, BorderLayout.CENTER);
+
         playerInfoLabel = new JLabel("", SwingConstants.CENTER);
-        playerInfoLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
-        wrapper.add(playerInfoLabel, BorderLayout.NORTH);
+        playerInfoLabel.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        playerInfoLabel.setForeground(new Color(0xD6EAF8));
+        panel.add(playerInfoLabel, BorderLayout.SOUTH);
 
-        // Painel esquerdo — botões de resposta
-        JPanel leftPanel = new JPanel(new GridLayout(5, 1, 5, 5));
-        leftPanel.setBorder(BorderFactory.createTitledBorder("Perguntas"));
-        for (int i = 1; i <= 4; i++) {
-            leftPanel.add(new JButton(String.valueOf(i)));
+        return panel;
+    }
+
+    // -------------------------------------------------------
+    // GAME
+    // -------------------------------------------------------
+    private JPanel buildGamePanel() {
+        JPanel wrapper = new JPanel(new BorderLayout(5, 5));
+        wrapper.setBackground(new Color(0x1A252F));
+
+        // Barra superior: info jogador + tipo de ronda
+        JPanel topBar = new JPanel(new BorderLayout());
+        topBar.setBackground(new Color(0x2C3E50));
+        topBar.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
+        playerInfoLabel = new JLabel("", SwingConstants.LEFT);
+        playerInfoLabel.setForeground(new Color(0xECF0F1));
+        questionInfoLabel = new JLabel("", SwingConstants.RIGHT);
+        questionInfoLabel.setForeground(new Color(0xF39C12));
+        topBar.add(playerInfoLabel, BorderLayout.WEST);
+        topBar.add(questionInfoLabel, BorderLayout.EAST);
+        wrapper.add(topBar, BorderLayout.NORTH);
+
+        // Centro: pergunta + timer
+        JPanel centerPanel = new JPanel(new BorderLayout());
+        centerPanel.setBackground(new Color(0x1A252F));
+        centerPanel.setBorder(BorderFactory.createEmptyBorder(20, 30, 10, 30));
+
+        questionLabel = new JLabel("", SwingConstants.CENTER);
+        questionLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+        questionLabel.setForeground(Color.WHITE);
+        centerPanel.add(questionLabel, BorderLayout.CENTER);
+
+        timerLabel = new JLabel("⏱ 30s", SwingConstants.CENTER);
+        timerLabel.setFont(new Font("SansSerif", Font.BOLD, 26));
+        timerLabel.setForeground(Color.WHITE);
+        centerPanel.add(timerLabel, BorderLayout.SOUTH);
+
+        // Botões de resposta (4)
+        JPanel buttonsPanel = new JPanel(new GridLayout(2, 2, 8, 8));
+        buttonsPanel.setBorder(BorderFactory.createEmptyBorder(10, 20, 20, 20));
+        buttonsPanel.setBackground(new Color(0x1A252F));
+        answerButtons = new JButton[4];
+        for (int i = 0; i < 4; i++) {
+            JButton btn = new JButton();
+            btn.setFont(new Font("SansSerif", Font.BOLD, 15));
+            btn.setForeground(Color.WHITE);
+            btn.setFocusPainted(false);
+            btn.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+            btn.setOpaque(true);
+            final int idx = i;
+            btn.addActionListener(e -> onAnswer(idx));
+            answerButtons[i] = btn;
+            buttonsPanel.add(btn);
         }
 
-        // Painel central — título + timer
-        JPanel centerPanel = new JPanel(new GridLayout(2, 1));
-        JLabel kahootLabel = new JLabel("Kahoot!", SwingConstants.CENTER);
-        timerLabel = new JLabel("Timer: --", SwingConstants.CENTER);
-        centerPanel.add(kahootLabel);
-        centerPanel.add(timerLabel);
+        // Tabela de scores à direita
+        String[] cols = {"Equipa", "Pontos"};
+        scoreTableModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        JTable scoreTable = new JTable(scoreTableModel);
+        scoreTable.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        scoreTable.setRowHeight(24);
+        JScrollPane scoreScroll = new JScrollPane(scoreTable);
+        scoreScroll.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(new Color(0x34495E)),
+                "Pontuações", 0, 0,
+                new Font("SansSerif", Font.BOLD, 12), Color.WHITE));
+        scoreScroll.setBackground(new Color(0x1A252F));
+        scoreScroll.setPreferredSize(new Dimension(200, 0));
 
-        // Painel direito — tabela de scores
-        String[] columns = {"Team", "Score", "Last round points"};
-        DefaultTableModel model = new DefaultTableModel(columns, 0);
-        JTable table = new JTable(model);
-        JScrollPane scrollPane = new JScrollPane(table);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Scores"));
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                buildCenter(centerPanel, buttonsPanel), scoreScroll);
+        split.setResizeWeight(0.75);
+        split.setDividerSize(4);
+        split.setBorder(null);
+        wrapper.add(split, BorderLayout.CENTER);
 
-        // Split panes
-        JSplitPane rightSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, centerPanel, scrollPane);
-        rightSplit.setResizeWeight(0.6);
-        rightSplit.setDividerSize(0);
-        rightSplit.setBorder(null);
-        rightSplit.setEnabled(false);
-
-        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, rightSplit);
-        mainSplit.setResizeWeight(0.3);
-        mainSplit.setDividerSize(0);
-        mainSplit.setBorder(null);
-        mainSplit.setEnabled(false);
-
-        SwingUtilities.invokeLater(() -> {
-            mainSplit.setDividerLocation(0.58);
-            rightSplit.setDividerLocation(0.16);
-        });
-
-        removeDividerBorder(mainSplit);
-        removeDividerBorder(rightSplit);
-
-        wrapper.add(mainSplit, BorderLayout.CENTER);
         return wrapper;
     }
 
-    private void removeDividerBorder(JSplitPane pane) {
-        pane.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
-            @Override
-            public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
-                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
-                    @Override
-                    public void setBorder(Border b) {}
-                };
-            }
+    private JPanel buildCenter(JPanel center, JPanel buttons) {
+        JPanel p = new JPanel(new BorderLayout());
+        p.setBackground(new Color(0x1A252F));
+        p.add(center, BorderLayout.CENTER);
+        p.add(buttons, BorderLayout.SOUTH);
+        return p;
+    }
+
+    private void onAnswer(int idx) {
+        if (answered) {
+            return;
+        }
+        answered = true;
+        // Desativa todos os botões
+        for (JButton b : answerButtons) {
+            b.setEnabled(false);
+        }
+        answerButtons[idx].setBackground(new Color(0xF39C12)); // laranja = selecionado
+        // Envia ao servidor
+        if (client != null) {
+            client.sendAnswer(idx);
+        }
+    }
+
+    private Color getOptionColor(int i) {
+        Color[] colors = {
+            new Color(0xE74C3C), // vermelho
+            new Color(0x2980B9), // azul
+            new Color(0xF39C12), // laranja
+            new Color(0x27AE60) // verde
+        };
+        return colors[i % colors.length];
+    }
+
+    private void updateScoreTable(Map<String, Integer> totals, Map<String, Integer> round) {
+        SwingUtilities.invokeLater(() -> {
+            scoreTableModel.setRowCount(0);
+            totals.entrySet().stream()
+                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                    .forEach(e -> scoreTableModel.addRow(new Object[]{
+                e.getKey(), e.getValue()
+            }));
         });
     }
-    /*public void createAndShowGUI() {
 
-        UIManager.put("SplitPane.border", BorderFactory.createEmptyBorder());
-        UIManager.put("SplitPaneDivider.border", BorderFactory.createEmptyBorder());
+    // -------------------------------------------------------
+    // RESULT
+    // -------------------------------------------------------
+    private JPanel buildResultPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBackground(new Color(0x1A252F));
+        panel.setBorder(BorderFactory.createEmptyBorder(30, 40, 30, 40));
 
-        JFrame frame = new JFrame("Kahoot Client");
-        frame.setSize(800, 300);
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setLayout(new BorderLayout());
+        resultTitleLabel = new JLabel("Fim da Ronda!", SwingConstants.CENTER);
+        resultTitleLabel.setFont(new Font("SansSerif", Font.BOLD, 28));
+        resultTitleLabel.setForeground(Color.WHITE);
 
-        // Left panel with question buttons
-        JPanel leftPanel = new JPanel();
-        leftPanel.setLayout(new GridLayout(5, 1,5,5));
-        leftPanel.setBorder(BorderFactory.createTitledBorder("Perguntas"));
+        resultCorrectLabel = new JLabel("", SwingConstants.CENTER);
+        resultCorrectLabel.setFont(new Font("SansSerif", Font.PLAIN, 18));
+        resultCorrectLabel.setForeground(new Color(0x2ECC71));
 
-        for (int i = 1; i <= 4; i++) {
-            JButton questionButton = new JButton(String.valueOf(i));
-            leftPanel.add(questionButton);
-        }
+        JPanel top = new JPanel(new GridLayout(2, 1, 5, 5));
+        top.setBackground(new Color(0x1A252F));
+        top.add(resultTitleLabel);
+        top.add(resultCorrectLabel);
 
-        // Center panel with game info
-        JPanel centerPanel = new JPanel();
-        centerPanel.setLayout(new GridLayout(2,1));
+        resultScoreArea = new JTextArea();
+        resultScoreArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
+        resultScoreArea.setEditable(false);
+        resultScoreArea.setBackground(new Color(0x2C3E50));
+        resultScoreArea.setForeground(Color.WHITE);
+        resultScoreArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        JLabel kahootLabel = new JLabel("Kahoot!");
-        kahootLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        JLabel timerLabel = new JLabel("Timer: ");
-        timerLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        panel.add(top, BorderLayout.NORTH);
+        panel.add(new JScrollPane(resultScoreArea), BorderLayout.CENTER);
 
+        JLabel hint = new JLabel("A próxima pergunta começa em breve...", SwingConstants.CENTER);
+        hint.setForeground(new Color(0x95A5A6));
+        panel.add(hint, BorderLayout.SOUTH);
 
-        centerPanel.add(kahootLabel);
-        centerPanel.add(Box.createRigidArea(new Dimension(0, 20)));
-        centerPanel.add(timerLabel);
+        return panel;
+    }
 
-        // Right panel with scores
-        String[] columns = {"Team", "Score", "Last round points"};
-        DefaultTableModel model = new DefaultTableModel(columns, 0);
-        JTable table = new JTable(model);
+    // -------------------------------------------------------
+    // END
+    // -------------------------------------------------------
+    private JPanel buildEndPanel() {
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBackground(new Color(0x1A252F));
+        panel.setBorder(BorderFactory.createEmptyBorder(30, 40, 30, 40));
 
-        JScrollPane scrollPane = new JScrollPane(table);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Scores"));
+        endWinnerLabel = new JLabel("", SwingConstants.CENTER);
+        endWinnerLabel.setFont(new Font("SansSerif", Font.BOLD, 30));
+        endWinnerLabel.setForeground(new Color(0xF1C40F));
 
-        // Add panels to frame
-        // Split 1: center + right
-        JSplitPane rightSplit = new JSplitPane(
-                JSplitPane.HORIZONTAL_SPLIT,
-                centerPanel,
-                scrollPane
-        );
-        rightSplit.setResizeWeight(0.6);
-        rightSplit.setDividerSize(0);
-        rightSplit.setBorder(null);
-        rightSplit.setEnabled(false);
+        endScoreArea = new JTextArea();
+        endScoreArea.setFont(new Font("Monospaced", Font.PLAIN, 15));
+        endScoreArea.setEditable(false);
+        endScoreArea.setBackground(new Color(0x2C3E50));
+        endScoreArea.setForeground(Color.WHITE);
+        endScoreArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // Split 2: left + (center + right)
-        JSplitPane mainSplit = new JSplitPane(
-                JSplitPane.HORIZONTAL_SPLIT,
-                leftPanel,
-                rightSplit
-        );
-        mainSplit.setResizeWeight(0.3);
-        mainSplit.setDividerSize(0);
-        mainSplit.setBorder(null);
-        mainSplit.setEnabled(false);
+        JButton closeBtn = new JButton("Fechar");
+        closeBtn.addActionListener(e -> System.exit(0));
 
-        frame.add(mainSplit, BorderLayout.CENTER);
+        panel.add(endWinnerLabel, BorderLayout.NORTH);
+        panel.add(new JScrollPane(endScoreArea), BorderLayout.CENTER);
+        panel.add(closeBtn, BorderLayout.SOUTH);
 
-        // Set initial divider positions
-        SwingUtilities.invokeLater(() -> {
-            mainSplit.setDividerLocation(0.58);
-            rightSplit.setDividerLocation(0.16);
-        });
-
-        // remover completamente a UI do divider
-        mainSplit.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
-            @Override
-            public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
-                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
-                    @Override
-                    public void setBorder(Border b) {}
-                };
-            }
-        });
-
-        rightSplit.setUI(new javax.swing.plaf.basic.BasicSplitPaneUI() {
-            @Override
-            public javax.swing.plaf.basic.BasicSplitPaneDivider createDefaultDivider() {
-                return new javax.swing.plaf.basic.BasicSplitPaneDivider(this) {
-                    @Override
-                    public void setBorder(Border b) {}
-                };
-            }
-        });
-
-        frame.setVisible(true);
-
-        new Thread(() -> {
-            int timer = 20;
-            while (timer >= 0) {
-                timerLabel.setText("Timer: " + timer);
-                timer--;
-                try {Thread.sleep(1000);} catch (InterruptedException e) {}
-            }
-        }).start();
-    }*/
+        return panel;
+    }
 }

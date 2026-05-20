@@ -4,12 +4,13 @@ import java.util.List;
 
 public class Question {
 
-    private String question;    
-    private int correct;   
+    private String question;
+    private int correct;
     private int points;
     private List<String> options;
 
-    public Question(){}
+    public Question() {
+    }
 
     public String getQuestion() {
         return question;
@@ -29,9 +30,9 @@ public class Question {
 
     @Override
     public String toString() {
-        return "Question: " + question +
-               "\nPoints: " + points +
-               "\nCorrect: " + correct +
-               "\nOptions: " + options;
+        return "Question: " + question
+                + "\nPoints: " + points
+                + "\nCorrect: " + correct
+                + "\nOptions: " + options;
     }
 }

@@ -7,9 +7,10 @@ public class QuestionFile {
     private String name;
     private List<Question> questions;
 
-    public QuestionFile(){}
+    public QuestionFile() {
+    }
 
-    public String getName(){
+    public String getName() {
         return name;
     }
 

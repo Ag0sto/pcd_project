@@ -1,27 +1,26 @@
 package pt.projetopcd.iskahoot.client;
 
+import pt.projetopcd.iskahoot.model.Message;
+import pt.projetopcd.iskahoot.model.Player;
+
+import javax.swing.SwingUtilities;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.Socket;
 
-import javax.swing.SwingUtilities;
-
-import pt.projetopcd.iskahoot.model.Message;
-import pt.projetopcd.iskahoot.model.Player;
-import pt.projetopcd.iskahoot.server.DealWithClient;
-
 /**
  * Cliente IsKahoot.
  *
- * Uso: java clienteKahoot {IP PORT Jogo Equipa Username}
+ * Uso:
+ *   java clienteKahoot {IP PORT Jogo Equipa Username}
  *
  * Ou sem argumentos → GUI de login onde o utilizador preenche os campos.
  */
 public class Client {
 
-    private ObjectInputStream in;
+    private ObjectInputStream  in;
     private ObjectOutputStream out;
     private Socket socket;
 
@@ -29,7 +28,7 @@ public class Client {
 
     // Parâmetros de ligação
     private String serverHost = "localhost";
-    private int serverPort = 8080;
+    private int    serverPort = 8080;
 
     public Client(ClientGUI gui) {
         this.gui = gui;
@@ -42,13 +41,14 @@ public class Client {
     // -------------------------------------------------------
     // Main
     // -------------------------------------------------------
+
     public static void main(String[] args) {
         if (args.length == 5) {
             // Modo linha de comandos: IP PORT Jogo Equipa Username
-            String host = args[0];
-            int port = Integer.parseInt(args[1]);
-            String gameId = args[2];
-            String team = args[3];
+            String host  = args[0];
+            int    port  = Integer.parseInt(args[1]);
+            String gameId  = args[2];
+            String team    = args[3];
             String username = args[4];
 
             Client client = new Client();
@@ -73,35 +73,31 @@ public class Client {
     // -------------------------------------------------------
     // Ligação e registo
     // -------------------------------------------------------
+
     void connectToServer() throws IOException {
         InetAddress addr = InetAddress.getByName(serverHost);
         socket = new Socket(addr, serverPort);
         // out ANTES de in para evitar deadlock
         out = new ObjectOutputStream(socket.getOutputStream());
-        in = new ObjectInputStream(socket.getInputStream());
+        in  = new ObjectInputStream(socket.getInputStream());
         System.out.println("[Client] Ligado a " + serverHost + ":" + serverPort);
     }
 
-    /**
-     * Liga, regista e arranca o loop de receção de mensagens.
-     */
+    /** Liga, regista e arranca o loop de receção de mensagens. */
     public void connect(String gameId, String teamName, String username) {
         try {
             connectToServer();
             register(gameId, teamName, username);
         } catch (IOException e) {
-            if (gui != null) {
-                gui.showError("Erro de ligação: " + e.getMessage()); 
-            }else {
-                e.printStackTrace();
-            }
+            if (gui != null) gui.showError("Erro de ligação: " + e.getMessage());
+            else e.printStackTrace();
         }
     }
 
     private void register(String gameId, String teamName, String username) throws IOException {
-        // Envia REGISTER
-        DealWithClient.RegisterPayload payload
-                = new DealWithClient.RegisterPayload(username, teamName, gameId);
+        // Envia REGISTER — RegisterPayload está agora em Message
+        Message.RegisterPayload payload =
+                new Message.RegisterPayload(username, teamName, gameId);
         sendMessage(new Message(Message.Type.REGISTER, payload));
 
         // Aguarda resposta
@@ -110,9 +106,7 @@ public class Client {
             if (reply.getType() == Message.Type.ERROR) {
                 String reason = (String) reply.getPayload();
                 System.err.println("[Client] Registo recusado: " + reason);
-                if (gui != null) {
-                    gui.showError(reason);
-                }
+                if (gui != null) gui.showError(reason);
                 return;
             }
             if (reply.getType() == Message.Type.REGISTERED) {
@@ -130,9 +124,7 @@ public class Client {
         }
     }
 
-    /**
-     * Loop que recebe mensagens do servidor e repassa à GUI.
-     */
+    /** Loop que recebe mensagens do servidor e repassa à GUI. */
     private void receiveLoop() throws IOException, ClassNotFoundException {
         while (true) {
             Message msg;
@@ -145,38 +137,26 @@ public class Client {
 
             switch (msg.getType()) {
                 case WAITING:
-                    if (gui != null) {
-                        gui.showWaiting((String) msg.getPayload()); 
-                    }else {
-                        System.out.println("[Aguardar] " + msg.getPayload());
-                    }
+                    if (gui != null) gui.showWaiting((String) msg.getPayload());
+                    else System.out.println("[Aguardar] " + msg.getPayload());
                     break;
 
                 case QUESTION:
                     Message.QuestionMsg qm = (Message.QuestionMsg) msg.getPayload();
-                    if (gui != null) {
-                        gui.showQuestion(qm); 
-                    }else {
-                        printQuestion(qm);
-                    }
+                    if (gui != null) gui.showQuestion(qm);
+                    else printQuestion(qm);
                     break;
 
                 case ROUND_END:
                     Message.RoundResult rr = (Message.RoundResult) msg.getPayload();
-                    if (gui != null) {
-                        gui.showRoundResult(rr); 
-                    }else {
-                        printRoundResult(rr, false);
-                    }
+                    if (gui != null) gui.showRoundResult(rr);
+                    else printRoundResult(rr, false);
                     break;
 
                 case GAME_END:
                     Message.RoundResult final_ = (Message.RoundResult) msg.getPayload();
-                    if (gui != null) {
-                        gui.showGameEnd(final_); 
-                    }else {
-                        printRoundResult(final_, true);
-                    }
+                    if (gui != null) gui.showGameEnd(final_);
+                    else printRoundResult(final_, true);
                     return; // fim
 
                 default:
@@ -188,6 +168,7 @@ public class Client {
     // -------------------------------------------------------
     // Envio de resposta
     // -------------------------------------------------------
+
     public void sendAnswer(int optionIndex) {
         try {
             sendMessage(new Message(Message.Type.ANSWER, optionIndex));
@@ -205,6 +186,7 @@ public class Client {
     // -------------------------------------------------------
     // Terminal (sem GUI)
     // -------------------------------------------------------
+
     private void printQuestion(Message.QuestionMsg q) {
         System.out.println("\n=== Pergunta " + q.questionNumber + "/" + q.totalQuestions
                 + (q.isTeamRound ? " [EQUIPA]" : " [INDIVIDUAL]") + " ===");
@@ -216,12 +198,21 @@ public class Client {
 
     private void printRoundResult(Message.RoundResult r, boolean isFinal) {
         System.out.println(isFinal ? "\n=== FIM DO JOGO ===" : "\n--- Fim da Ronda ---");
-        if (!isFinal) {
-            System.out.println("Resposta correta: " + r.correctOption);
+        if (!isFinal && r.correctOption >= 0)
+            System.out.println("Resposta correta: opção " + r.correctOption);
+
+        System.out.println("\n  Jogadores:");
+        for (Message.PlayerResult pr : r.playerResults) {
+            System.out.printf("    %-12s (%s)  ronda:+%d  total:%d  bonus:x%d  %s%n",
+                    pr.username, pr.teamName,
+                    pr.roundPoints, pr.totalPoints, pr.bonusApplied,
+                    pr.answeredCorrectly ? "✔" : (pr.hasAnswered ? "✘" : "—"));
         }
-        System.out.println("Pontuações: " + r.teamScores);
-        if (isFinal) {
-            System.out.println("Vencedor: " + r.winnerTeam);
+        System.out.println("\n  Equipas:");
+        for (Message.TeamResult tr : r.teamResults) {
+            System.out.printf("    %-12s  ronda:+%d  total:%d%n",
+                    tr.teamName, tr.roundPoints, tr.totalPoints);
         }
+        if (isFinal) System.out.println("\nVencedor: " + r.winnerTeam);
     }
 }

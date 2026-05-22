@@ -157,7 +157,7 @@ public class Server {
                                     gs.getGameId(),
                                     gs.getRegisteredCount(),
                                     gs.getExpectedPlayers(),
-                                    gs.getTotalTeamScores());
+                                    ScoreManager.buildTeamResults(gs).toString());
                         }
                     }
                     break;

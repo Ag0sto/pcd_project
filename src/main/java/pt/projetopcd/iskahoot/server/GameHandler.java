@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 import pt.projetopcd.iskahoot.concurrency.ModifiedCountDownLatch;
 import pt.projetopcd.iskahoot.concurrency.TeamBarrier;
@@ -164,6 +165,15 @@ public class GameHandler extends Thread {
 
         // Interrompe workers que ainda estejam bloqueados
         workers.forEach(Thread::interrupt);
+
+        // Aguarda que todos os workers terminem antes de continuar
+        for (Thread t : workers) {
+            try {
+                t.join(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     // -------------------------------------------------------
@@ -172,6 +182,8 @@ public class GameHandler extends Thread {
     private void processTeamRound(Question q, int questionIndex) {
         Map<String, List<String>> teams = game.getTeams();
         List<Thread> allWorkers = new ArrayList<>();
+
+        CountDownLatch allTeamsDone = new CountDownLatch(teams.size());
 
         // Uma barreira por equipa
         for (Map.Entry<String, List<String>> entry : teams.entrySet()) {
@@ -204,6 +216,9 @@ public class GameHandler extends Thread {
                         }
                         System.out.printf("  [Equipa] %s: allCorrect=%b pts=%d%n",
                                 teamName, allCorrect, pts);
+
+                        // Notifica o GameHandler que esta equipa terminou
+                        allTeamsDone.countDown();
                     }
             );
 
@@ -211,6 +226,7 @@ public class GameHandler extends Thread {
             for (String username : members) {
                 DealWithClient dwc = findHandler(username);
                 if (dwc == null) {
+                    allTeamsDone.countDown();
                     continue;
                 }
                 dwc.clearAnswer();
@@ -239,7 +255,7 @@ public class GameHandler extends Thread {
         // Aguarda todas as barreiras libertadas (o tempo máximo é gerido pelas barreiras)
         // Aguardamos o QUESTION_TIME + margem
         try {
-            Thread.sleep((QUESTION_TIME + 2) * 1000L);
+            allTeamsDone.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

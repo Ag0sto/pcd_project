@@ -3,13 +3,13 @@ package pt.projetopcd.iskahoot.concurrency;
 /**
  * CountDownLatch modificado para perguntas individuais.
  *
- * - bonusCount  : número de jogadores que recebem bónus (ex: 2)
- * - bonusFactor : multiplicador aplicado aos primeiros (ex: 2 = dobro)
- * - waitPeriod  : tempo máximo de espera em segundos
- * - count       : número total de jogadores (= número de countdown() esperados)
+ * - bonusCount : número de jogadores que recebem bónus (ex: 2) - bonusFactor :
+ * multiplicador aplicado aos primeiros (ex: 2 = dobro) - waitPeriod : tempo
+ * máximo de espera em segundos - count : número total de jogadores (= número de
+ * countdown() esperados)
  *
- * countDown() devolve o fator a aplicar à cotação do jogador.
- * await()     bloqueia até count==0 ou tempo expirar.
+ * countDown() devolve o fator a aplicar à cotação do jogador. await() bloqueia
+ * até count==0 ou tempo expirar.
  */
 public class ModifiedCountDownLatch {
 
@@ -24,15 +24,14 @@ public class ModifiedCountDownLatch {
 
     private Thread timerThread;
 
-    public ModifiedCountDownLatch(int bonusFactor, int bonusCount,
-                                  int waitPeriod, int count) {
+    public ModifiedCountDownLatch(int bonusFactor, int bonusCount, int waitPeriod, int count) {
         this.bonusFactor = bonusFactor;
-        this.bonusCount  = bonusCount;
-        this.waitPeriod  = waitPeriod;
-        this.count       = count;
-        this.answered    = 0;
-        this.timedOut    = false;
-        this.done        = false;
+        this.bonusCount = bonusCount;
+        this.waitPeriod = waitPeriod;
+        this.count = count;
+        this.answered = 0;
+        this.timedOut = false;
+        this.done = false;
 
         startTimer();
     }
@@ -59,13 +58,14 @@ public class ModifiedCountDownLatch {
 
     /**
      * Regista a resposta de um jogador.
-     * @return fator multiplicativo a aplicar à pontuação:
-     *         bonusFactor se o jogador está nos primeiros bonusCount,
-     *         1 caso contrário.
+     *
+     * @return fator multiplicativo a aplicar à pontuação: bonusFactor se o
+     * jogador está nos primeiros bonusCount, 1 caso contrário.
      */
     public synchronized int countDown() {
-        if (done) return 1; // ronda já fechada
-
+        if (done) {
+            return 1; // ronda já fechada
+        }
         answered++;
         int factor = (answered <= bonusCount) ? bonusFactor : 1;
 
@@ -90,6 +90,11 @@ public class ModifiedCountDownLatch {
         }
     }
 
-    public synchronized boolean isTimedOut() { return timedOut; }
-    public synchronized boolean isDone()     { return done; }
+    public synchronized boolean isTimedOut() {
+        return timedOut;
+    }
+
+    public synchronized boolean isDone() {
+        return done;
+    }
 }

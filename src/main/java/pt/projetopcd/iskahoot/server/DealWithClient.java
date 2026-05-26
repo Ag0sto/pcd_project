@@ -13,10 +13,16 @@ import java.net.SocketException;
 /**
  * Thread dedicada a cada jogador ligado ao servidor.
  * Registo, envio de mensagens e receção de respostas.
+ *
+ * ALTERAÇÃO: a resposta do jogador é agora processada diretamente
+ * no receiveLoop() desta thread, eliminando a necessidade de criar
+ * threads auxiliares no GameHandler para aguardar cada resposta.
+ * O GameHandler expõe notifyAnswer() para ser chamado daqui.
  */
 public class DealWithClient extends Thread {
 
-    private final Socket       socket;
+    private final Socket  socket;
+    private final Server  server;
     private ObjectInputStream  in;
     private ObjectOutputStream out;
 
@@ -25,12 +31,15 @@ public class DealWithClient extends Thread {
     private String    gameId;
     private GameState game;
 
-    private volatile Integer pendingAnswer = null;
-    private final    Object  answerLock    = new Object();
-    private volatile boolean running       = true;
+    // Referência ao GameHandler ativo — definida quando o jogo arranca.
+    // Volatile porque é escrita pela thread do GameHandler e lida por esta.
+    private volatile GameHandler gameHandler = null;
 
-    public DealWithClient(Socket socket) {
+    private volatile boolean running = true;
+
+    public DealWithClient(Socket socket, Server server) {
         this.socket = socket;
+        this.server = server;
         setDaemon(true);
     }
 
@@ -42,37 +51,22 @@ public class DealWithClient extends Thread {
         try {
             out.writeObject(msg);
             out.flush();
-            out.reset(); // evita cache de referências
+            out.reset();
         } catch (IOException e) {
             running = false;
         }
     }
 
     // ─────────────────────────────────────────────────────────
-    // Resposta do jogador
+    // Ligação ao GameHandler
     // ─────────────────────────────────────────────────────────
 
-    public int waitForAnswer() throws InterruptedException {
-        synchronized (answerLock) {
-            while (pendingAnswer == null && running) answerLock.wait();
-            if (!running) throw new InterruptedException("Jogador desligado");
-            int ans = pendingAnswer;
-            pendingAnswer = null;
-            return ans;
-        }
-    }
-
-    private void setAnswer(int idx) {
-        synchronized (answerLock) {
-            if (pendingAnswer == null) {
-                pendingAnswer = idx;
-                answerLock.notifyAll();
-            }
-        }
-    }
-
-    public void clearAnswer() {
-        synchronized (answerLock) { pendingAnswer = null; }
+    /**
+     * Chamado pelo GameHandler quando o jogo arranca, para que esta
+     * thread saiba a quem entregar as respostas recebidas.
+     */
+    public void setGameHandler(GameHandler gh) {
+        this.gameHandler = gh;
     }
 
     // ─────────────────────────────────────────────────────────
@@ -92,7 +86,6 @@ public class DealWithClient extends Thread {
             if (running) System.err.println("[DWC:" + username + "] Erro: " + e.getMessage());
         } finally {
             running = false;
-            synchronized (answerLock) { answerLock.notifyAll(); }
             try { socket.close(); } catch (IOException ignored) {}
             System.out.println("[DWC:" + (username != null ? username : "?") + "] Desligado.");
         }
@@ -110,7 +103,7 @@ public class DealWithClient extends Thread {
         this.teamName = reg.teamName;
         this.gameId   = reg.gameId;
 
-        GameState gs = Server.getGame(gameId);
+        GameState gs = server.getGame(gameId);
         if (gs == null) {
             send(new Message(Message.Type.ERROR, "Jogo '" + gameId + "' não encontrado"));
             return false;
@@ -128,26 +121,44 @@ public class DealWithClient extends Thread {
 
         Player confirmed = new Player(gs.getRegisteredCount(), username, teamName);
         send(new Message(Message.Type.REGISTERED, confirmed));
-        Server.notifyPlayerJoined(gameId);
+
+        // Bloqueia na barreira até todos os jogadores estarem registados;
+        // o último a chegar submete o GameHandler ao pool automaticamente.
+        server.awaitGameStart(gameId);
         return true;
     }
 
+    /**
+     * Loop de receção de mensagens do cliente.
+     *
+     * Quando chega um ANSWER, em vez de o guardar num campo e obrigar
+     * o GameHandler a criar uma thread para esperar por ele, entregamo-lo
+     * diretamente ao GameHandler através de notifyAnswer(). É esta thread
+     * (DealWithClient) que faz o trabalho — sem threads extra.
+     */
     private void receiveLoop() throws IOException, ClassNotFoundException {
         while (running) {
             Message msg;
             try {
                 msg = (Message) in.readObject();
-            } catch (EOFException | SocketException e) { break; }
+            } catch (EOFException | SocketException e) {
+                break;
+            }
 
             if (msg.getType() == Message.Type.ANSWER) {
-                setAnswer((Integer) msg.getPayload());
+                int answerIdx = (Integer) msg.getPayload();
+                GameHandler gh = gameHandler;
+                if (gh != null) {
+                    // Processamento feito nesta thread — não é necessária nenhuma
+                    // thread auxiliar no GameHandler.
+                    gh.notifyAnswer(this, answerIdx);
+                }
             }
         }
     }
 
     public void stopClient() {
         running = false;
-        synchronized (answerLock) { answerLock.notifyAll(); }
         try { socket.close(); } catch (IOException ignored) {}
     }
 

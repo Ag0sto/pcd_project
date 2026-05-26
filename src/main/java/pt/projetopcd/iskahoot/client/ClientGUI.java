@@ -253,8 +253,8 @@ public class ClientGUI {
             String bonus  = pr.bonusApplied > 1 ? "×" + pr.bonusApplied : "-";
             String acerto = !pr.hasAnswered ? "—" : (pr.answeredCorrectly ? "✔" : "✘");
             model.addRow(new Object[]{
-                pos++, pr.username, pr.teamName,
-                pr.roundPoints, pr.totalPoints, bonus, acerto
+                    pos++, pr.username, pr.teamName,
+                    pr.roundPoints, pr.totalPoints, bonus, acerto
             });
         }
     }
@@ -569,12 +569,12 @@ public class ClientGUI {
         endWinnerLabel.setHorizontalAlignment(SwingConstants.CENTER);
         panel.add(endWinnerLabel, BorderLayout.NORTH);
 
-        String[] pCols = {"#", "Jogador", "Equipa", "Pontos Totais"};
+        String[] pCols = {"#", "Jogador", "Equipa", "+Última Ronda", "Pontos Totais", "Bónus", "✔"};
         endPlayerModel = new DefaultTableModel(pCols, 0) {
             public boolean isCellEditable(int r, int c) { return false; }
         };
 
-        String[] tCols = {"#", "Equipa", "Pontos Totais"};
+        String[] tCols = {"#", "Equipa", "+Última Ronda", "Pontos Totais"};
         endTeamModel = new DefaultTableModel(tCols, 0) {
             public boolean isCellEditable(int r, int c) { return false; }
         };

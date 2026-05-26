@@ -1,15 +1,18 @@
 package pt.projetopcd.iskahoot.concurrency;
 
+import java.util.function.IntConsumer;
+
 /**
  * CountDownLatch modificado para perguntas individuais.
  *
- * - bonusCount : número de jogadores que recebem bónus (ex: 2) - bonusFactor :
- * multiplicador aplicado aos primeiros (ex: 2 = dobro) - waitPeriod : tempo
- * máximo de espera em segundos - count : número total de jogadores (= número de
- * countdown() esperados)
+ * countDown(IntConsumer action) executa a action dentro do lock,
+ * passando-lhe o factor de bónus calculado, e só depois decrementa
+ * o contador — garantindo que quando await() desbloquear, toda a
+ * lógica de pontuação (recordPlayerAnswer) já terminou.
  *
- * countDown() devolve o fator a aplicar à cotação do jogador. await() bloqueia
- * até count==0 ou tempo expirar.
+ * Devolve:
+ *   bonusFactor ou 1  — se a ronda estava aberta (action foi executada)
+ *  -1                 — se a ronda já estava fechada (action NÃO é executada)
  */
 public class ModifiedCountDownLatch {
 
@@ -17,8 +20,8 @@ public class ModifiedCountDownLatch {
     private final int bonusCount;
     private final int waitPeriod;
 
-    private int count;          // jogadores que ainda não responderam
-    private int answered;       // jogadores que já responderam (para bónus)
+    private int     count;
+    private int     answered;
     private boolean timedOut;
     private boolean done;
 
@@ -26,12 +29,12 @@ public class ModifiedCountDownLatch {
 
     public ModifiedCountDownLatch(int bonusFactor, int bonusCount, int waitPeriod, int count) {
         this.bonusFactor = bonusFactor;
-        this.bonusCount = bonusCount;
-        this.waitPeriod = waitPeriod;
-        this.count = count;
-        this.answered = 0;
-        this.timedOut = false;
-        this.done = false;
+        this.bonusCount  = bonusCount;
+        this.waitPeriod  = waitPeriod;
+        this.count       = count;
+        this.answered    = 0;
+        this.timedOut    = false;
+        this.done        = false;
 
         startTimer();
     }
@@ -43,7 +46,7 @@ public class ModifiedCountDownLatch {
                 synchronized (ModifiedCountDownLatch.this) {
                     if (!done) {
                         timedOut = true;
-                        done = true;
+                        done     = true;
                         System.out.println("  [Latch] Tempo esgotado!");
                         ModifiedCountDownLatch.this.notifyAll();
                     }
@@ -59,15 +62,24 @@ public class ModifiedCountDownLatch {
     /**
      * Regista a resposta de um jogador.
      *
-     * @return fator multiplicativo a aplicar à pontuação: bonusFactor se o
-     * jogador está nos primeiros bonusCount, 1 caso contrário.
+     * A {@code action} recebe o factor de bónus e é executada dentro do
+     * lock do latch, antes de decrementar o contador interno. Assim, quando
+     * o GameHandler acorda do await(), toda a pontuação já está registada.
+     *
+     * @param action  chamada com o factor calculado (ex: recordPlayerAnswer)
+     * @return factor de bónus aplicado (>= 1), ou -1 se a ronda já fechou
      */
-    public synchronized int countDown() {
+    public synchronized int countDown(IntConsumer action) {
         if (done) {
-            return 1; // ronda já fechada
+            return -1; // ronda já fechada — resposta tardia, ignorar
         }
+
         answered++;
         int factor = (answered <= bonusCount) ? bonusFactor : 1;
+
+        // Executa o registo de pontuação dentro do lock, com o factor correto.
+        // O GameHandler só é acordado (notifyAll) depois disto terminar.
+        if (action != null) action.accept(factor);
 
         count--;
         System.out.println("  [Latch] countDown: responderam=" + answered
@@ -81,20 +93,12 @@ public class ModifiedCountDownLatch {
         return factor;
     }
 
-    /**
-     * Bloqueia até todos responderem ou o tempo expirar.
-     */
     public synchronized void await() throws InterruptedException {
         while (!done) {
             wait();
         }
     }
 
-    public synchronized boolean isTimedOut() {
-        return timedOut;
-    }
-
-    public synchronized boolean isDone() {
-        return done;
-    }
+    public synchronized boolean isTimedOut() { return timedOut; }
+    public synchronized boolean isDone()     { return done; }
 }

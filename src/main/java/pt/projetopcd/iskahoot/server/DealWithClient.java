@@ -7,20 +7,24 @@ import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.net.SocketException;
 
+import pt.projetopcd.iskahoot.concurrency.ModifiedCountDownLatch;
+import pt.projetopcd.iskahoot.concurrency.TeamBarrier;
 import pt.projetopcd.iskahoot.model.Message;
 import pt.projetopcd.iskahoot.model.Player;
 
 /**
  * Thread dedicada a cada jogador ligado ao servidor.
  *
- * Responsabilidades: - Receber registo inicial (username, equipa, código de
- * jogo) - Aguardar início do jogo - Receber respostas e repassá-las ao
- * GameHandler - Enviar mensagens do servidor ao cliente (perguntas, resultados,
- * etc.)
+ * Responsabilidades:
+ * - Receber registo inicial (username, equipa, código de jogo)
+ * - Aguardar início do jogo (barreira de arranque)
+ * - Receber respostas e processá-las diretamente (latch ou barrier)
+ * - Enviar mensagens do servidor ao cliente (perguntas, resultados, etc.)
  */
 public class DealWithClient extends Thread {
 
     private final Socket socket;
+    private final Server server;
     private ObjectInputStream in;
     private ObjectOutputStream out;
 
@@ -30,14 +34,23 @@ public class DealWithClient extends Thread {
     private String gameId;
     private GameState game;
 
-    // Resposta recebida para a ronda atual (null = ainda não recebida)
-    private volatile Integer pendingAnswer = null;
-    private final Object answerLock = new Object();
-
     private volatile boolean running = true;
 
-    public DealWithClient(Socket socket) {
+    // -------------------------------------------------------
+    // Contexto da ronda atual — atribuído pelo GameHandler
+    // antes de enviar a pergunta, limpo após a ronda.
+    // -------------------------------------------------------
+
+    // Ronda individual: latch a decrementar quando o jogador responder
+    private volatile ModifiedCountDownLatch currentLatch = null;
+
+    // Ronda de equipa: barrier + mapa de respostas da equipa a preencher
+    private volatile TeamBarrier        currentBarrier     = null;
+    private volatile java.util.Map<String, Integer> currentTeamAnswers = null;
+
+    public DealWithClient(Socket socket, Server server) {
         this.socket = socket;
+        this.server = server;
         setDaemon(true);
     }
 
@@ -48,7 +61,7 @@ public class DealWithClient extends Thread {
         try {
             out.writeObject(msg);
             out.flush();
-            out.reset(); // evita cache de objetos
+            out.reset();
         } catch (IOException e) {
             System.err.println("[DWC:" + username + "] Erro ao enviar: " + e.getMessage());
             running = false;
@@ -56,44 +69,34 @@ public class DealWithClient extends Thread {
     }
 
     // -------------------------------------------------------
-    // Aguardar resposta do jogador para a ronda atual
+    // API chamada pelo GameHandler para configurar a ronda
     // -------------------------------------------------------
+
     /**
-     * Bloqueia até o jogador enviar a resposta (ou a thread ser interrompida).
+     * Prepara o DealWithClient para uma ronda individual.
+     * Deve ser chamado antes de enviar a pergunta ao cliente.
      */
-    public int waitForAnswer() throws InterruptedException {
-        synchronized (answerLock) {
-            while (pendingAnswer == null && running) {
-                answerLock.wait();
-            }
-            if (!running) {
-                throw new InterruptedException("Jogador desligado");
-            }
-            int ans = pendingAnswer;
-            pendingAnswer = null;
-            return ans;
-        }
+    public void prepareIndividualRound(ModifiedCountDownLatch latch) {
+        this.currentLatch       = latch;
+        this.currentBarrier     = null;
+        this.currentTeamAnswers = null;
     }
 
     /**
-     * Chamado pelo loop de receção quando chega uma resposta.
+     * Prepara o DealWithClient para uma ronda de equipa.
+     * Deve ser chamado antes de enviar a pergunta ao cliente.
      */
-    private void setAnswer(int answerIndex) {
-        synchronized (answerLock) {
-            if (pendingAnswer == null) { // aceita apenas a primeira resposta por ronda
-                pendingAnswer = answerIndex;
-                answerLock.notifyAll();
-            }
-        }
+    public void prepareTeamRound(TeamBarrier barrier, java.util.Map<String, Integer> teamAnswers) {
+        this.currentBarrier     = barrier;
+        this.currentTeamAnswers = teamAnswers;
+        this.currentLatch       = null;
     }
 
-    /**
-     * Limpa a resposta pendente (entre rondas).
-     */
-    public void clearAnswer() {
-        synchronized (answerLock) {
-            pendingAnswer = null;
-        }
+    /** Limpa o contexto da ronda (entre perguntas). */
+    public void clearRound() {
+        this.currentLatch       = null;
+        this.currentBarrier     = null;
+        this.currentTeamAnswers = null;
     }
 
     // -------------------------------------------------------
@@ -102,16 +105,14 @@ public class DealWithClient extends Thread {
     @Override
     public void run() {
         try {
-            // Streams — out antes de in (evita deadlock)
+            // out antes de in para evitar deadlock
             out = new ObjectOutputStream(socket.getOutputStream());
-            in = new ObjectInputStream(socket.getInputStream());
+            in  = new ObjectInputStream(socket.getInputStream());
 
-            // 1. Registo
             if (!handleRegister()) {
                 return;
             }
 
-            // 2. Loop de receção de mensagens (respostas, etc.)
             receiveLoop();
 
         } catch (IOException | ClassNotFoundException e) {
@@ -120,22 +121,17 @@ public class DealWithClient extends Thread {
             }
         } finally {
             running = false;
-            // notifica waitForAnswer se estiver bloqueado
-            synchronized (answerLock) {
-                answerLock.notifyAll();
-            }
+            // Se estiver bloqueado numa barreira/latch, liberta
+            forceReleaseCurrentRound();
             try {
                 socket.close();
-            } catch (IOException ignored) {
-            }
+            } catch (IOException ignored) {}
             System.out.println("[DWC:" + (username != null ? username : "?") + "] Desligado.");
         }
     }
 
     /**
      * Lê a mensagem de registo e regista o jogador no jogo correto.
-     *
-     * @return true se bem-sucedido
      */
     private boolean handleRegister() throws IOException, ClassNotFoundException {
         Message msg = (Message) in.readObject();
@@ -144,22 +140,17 @@ public class DealWithClient extends Thread {
             return false;
         }
 
-        // payload: Player com gameId no campo team (reutilizamos os campos)
-        // Na prática, o cliente envia: Player(id=0, name=username, teamname=teamName)
-        // e o gameId vem num campo separado — usamos Message.RegisterPayload
         RegisterPayload reg = (RegisterPayload) msg.getPayload();
         this.username = reg.username;
         this.teamName = reg.teamName;
-        this.gameId = reg.gameId;
+        this.gameId   = reg.gameId;
 
-        // Procura o jogo no servidor
-        GameState gs = Server.getGame(gameId);
+        GameState gs = server.getGame(gameId);
         if (gs == null) {
             send(new Message(Message.Type.ERROR, "Jogo '" + gameId + "' não encontrado"));
             return false;
         }
 
-        // Regista no jogo
         boolean ok = gs.registerPlayer(username, teamName, this);
         if (!ok) {
             send(new Message(Message.Type.ERROR, "Registo recusado (nome duplicado ou equipa cheia)"));
@@ -171,19 +162,20 @@ public class DealWithClient extends Thread {
                 + ") registado no jogo " + gameId
                 + " [" + gs.getRegisteredCount() + "/" + gs.getExpectedPlayers() + "]");
 
-        // Confirma registo
         Player confirmed = new Player(gs.getRegisteredCount(), username, teamName);
         send(new Message(Message.Type.REGISTERED, confirmed));
 
-        // Notifica o servidor que pode haver jogadores suficientes para iniciar
-        Server.notifyPlayerJoined(gameId);
+        // Bloqueia na barreira até todos os jogadores estarem registados;
+        // o último a chegar dispara o GameHandler automaticamente.
+        server.awaitGameStart(gameId);
 
-        // Aguarda início do jogo (a thread fica viva recebendo mensagens)
         return true;
     }
 
     /**
      * Loop contínuo de receção de mensagens do cliente.
+     * Quando recebe uma ANSWER, processa-a diretamente no contexto
+     * da ronda atual (latch ou barrier) — sem criar threads extra.
      */
     private void receiveLoop() throws IOException, ClassNotFoundException {
         while (running) {
@@ -191,13 +183,12 @@ public class DealWithClient extends Thread {
             try {
                 msg = (Message) in.readObject();
             } catch (EOFException | SocketException e) {
-                break; // cliente desligou
+                break;
             }
 
             switch (msg.getType()) {
                 case ANSWER:
-                    int idx = (Integer) msg.getPayload();
-                    setAnswer(idx);
+                    handleAnswer((Integer) msg.getPayload());
                     break;
                 default:
                     System.err.println("[DWC:" + username + "] Mensagem inesperada: " + msg.getType());
@@ -205,28 +196,72 @@ public class DealWithClient extends Thread {
         }
     }
 
+    /**
+     * Processa uma resposta recebida do cliente.
+     * Executa na própria thread do DealWithClient — sem workers extra.
+     */
+    private void handleAnswer(int answerIdx) {
+        // --- Ronda individual ---
+        ModifiedCountDownLatch latch = currentLatch;
+        if (latch != null && !latch.isDone()) {
+            int factor  = latch.countDown();
+            boolean correct = (answerIdx == game.getCurrentQuestion().getCorrect());
+            int pts = correct ? game.getCurrentQuestion().getPoints() * factor : 0;
+
+            String team = game.getTeamOf(username);
+            if (pts > 0 && team != null) {
+                game.getScoreManager().addRoundPoints(team, pts);
+                game.addTeamScore(team, pts);
+            }
+
+            System.out.printf("  [Individual] %s respondeu %d (%s) -> %d pts (x%d)%n",
+                    username, answerIdx, correct ? "CERTO" : "ERRADO", pts, factor);
+            return;
+        }
+
+        // --- Ronda de equipa ---
+        TeamBarrier barrier = currentBarrier;
+        java.util.Map<String, Integer> teamAnswers = currentTeamAnswers;
+        if (barrier != null && !barrier.isReleased()) {
+            synchronized (teamAnswers) {
+                teamAnswers.put(username, answerIdx);
+            }
+            try {
+                barrier.arrive();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                try { barrier.arrive(); } catch (InterruptedException ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Se o jogador desligar a meio de uma ronda, avança o latch/barrier
+     * para não bloquear o GameHandler indefinidamente.
+     */
+    private void forceReleaseCurrentRound() {
+        ModifiedCountDownLatch latch = currentLatch;
+        if (latch != null && !latch.isDone()) {
+            latch.countDown();
+        }
+
+        TeamBarrier barrier = currentBarrier;
+        if (barrier != null && !barrier.isReleased()) {
+            try { barrier.arrive(); } catch (InterruptedException ignored) {}
+        }
+    }
+
     public void stopClient() {
         running = false;
-        synchronized (answerLock) {
-            answerLock.notifyAll();
-        }
+        forceReleaseCurrentRound();
         try {
             socket.close();
-        } catch (IOException ignored) {
-        }
+        } catch (IOException ignored) {}
     }
 
-    public String getUsername() {
-        return username;
-    }
-
-    public String getTeamName() {
-        return teamName;
-    }
-
-    public boolean isRunning() {
-        return running;
-    }
+    public String getUsername() { return username; }
+    public String getTeamName() { return teamName; }
+    public boolean isRunning()  { return running; }
 
     // -------------------------------------------------------
     // Payload de registo
@@ -240,7 +275,7 @@ public class DealWithClient extends Thread {
         public RegisterPayload(String username, String teamName, String gameId) {
             this.username = username;
             this.teamName = teamName;
-            this.gameId = gameId;
+            this.gameId   = gameId;
         }
     }
 }

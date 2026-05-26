@@ -5,7 +5,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CyclicBarrier;
 
 /**
  * Servidor IsKahoot.
@@ -22,34 +24,41 @@ public class Server {
     public static final int PORTO = 8080;
 
     // Jogos ativos: gameId -> GameState
-    private static final Map<String, GameState> games = new ConcurrentHashMap<>();
-    // Notificações de jogadores para iniciar jogos
-    private static final Map<String, Object> gameLocks = new ConcurrentHashMap<>();
+    private final Map<String, GameState> games = new ConcurrentHashMap<>();
+
+    // Barreiras de arranque: gameId -> CyclicBarrier
+    // Cada DealWithClient faz barrier.await() após registo.
+    // Quando o último jogador chega, a barrierAction lança o GameHandler.
+    private final Map<String, CyclicBarrier> gameBarriers = new ConcurrentHashMap<>();
 
     // -------------------------------------------------------
-    // API estática usada por DealWithClient e GameHandler
+    // API de instância usada por DealWithClient e GameHandler
     // -------------------------------------------------------
-    public static GameState getGame(String gameId) {
+    public GameState getGame(String gameId) {
         return games.get(gameId);
     }
 
-    public static void removeGame(String gameId) {
+    public void removeGame(String gameId) {
         games.remove(gameId);
-        gameLocks.remove(gameId);
+        gameBarriers.remove(gameId);
         System.out.println("[Server] Jogo " + gameId + " removido.");
     }
 
     /**
-     * Chamado por DealWithClient quando um jogador se regista. Se o jogo
-     * estiver completo, lança o GameHandler.
+     * Chamado por DealWithClient após o registo bem-sucedido do jogador.
+     * Bloqueia na barreira até todos os jogadores estarem presentes;
+     * o último a chegar dispara automaticamente o GameHandler.
      */
-    public static void notifyPlayerJoined(String gameId) {
-        Object lock = gameLocks.get(gameId);
-        if (lock == null) {
-            return;
-        }
-        synchronized (lock) {
-            lock.notifyAll();
+    public void awaitGameStart(String gameId) {
+        CyclicBarrier barrier = gameBarriers.get(gameId);
+        if (barrier == null) return;
+
+        try {
+            barrier.await(); // bloqueia até todos chegarem
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (BrokenBarrierException e) {
+            // jogo cancelado antes de encher — não faz nada
         }
     }
 
@@ -59,41 +68,27 @@ public class Server {
     private String createGame(int numTeams, int playersPerTeam, int numQuestions) {
         String gameId = generateGameId();
         GameState gs = new GameState(gameId, numTeams, playersPerTeam, numQuestions);
-        Object lock = new Object();
         games.put(gameId, gs);
-        gameLocks.put(gameId, lock);
+
+        int totalPlayers = numTeams * playersPerTeam;
+
+        // barrierAction: executada pela última thread a chegar, antes de todas serem libertadas
+        CyclicBarrier barrier = new CyclicBarrier(totalPlayers, () -> {
+            System.out.println("[Server] Jogo " + gameId + " completo! A iniciar GameHandler...");
+            new GameHandler(gs, Server.this).start();
+        });
+        gameBarriers.put(gameId, barrier);
 
         System.out.println("[Server] Jogo criado: " + gameId
                 + " (" + numTeams + " equipas x " + playersPerTeam
                 + " jogadores, " + numQuestions + " perguntas)");
 
-        // Thread que aguarda todos os jogadores e depois lança o GameHandler
-        Thread waiter = new Thread(() -> {
-            synchronized (lock) {
-                while (games.containsKey(gameId) && !gs.isFull()) {
-                    try {
-                        lock.wait();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                }
-            }
-            if (!games.containsKey(gameId)) {
-                return; // jogo cancelado
-            }
-            System.out.println("[Server] Jogo " + gameId + " completo! A iniciar GameHandler...");
-            new GameHandler(gs).start();
-        });
-        waiter.setDaemon(true);
-        waiter.start();
-
         return gameId;
     }
 
-    private static int gameCounter = 1000;
+    private int gameCounter = 1000;
 
-    private static synchronized String generateGameId() {
+    private synchronized String generateGameId() {
         return "GAME-" + (gameCounter++);
     }
 
@@ -106,7 +101,7 @@ public class Server {
             ss.setSoTimeout(0); // bloqueia indefinidamente
             while (true) {
                 Socket socket = ss.accept();
-                DealWithClient dwc = new DealWithClient(socket);
+                DealWithClient dwc = new DealWithClient(socket, this);
                 dwc.start();
             }
         } catch (IOException e) {
@@ -177,7 +172,7 @@ public class Server {
         }
     }
 
-    private static void printHelp() {
+    private void printHelp() {
         System.out.println("=== IsKahoot Server ===");
         System.out.println("  new <numEquipas> <jogadoresPorEquipa> <numPerguntas>  - cria novo jogo");
         System.out.println("  list   - lista jogos ativos");

@@ -16,21 +16,24 @@ import pt.projetopcd.iskahoot.model.QuestionLoader;
  * Thread dedicada à gestão de um jogo.
  *
  * Ciclo: 1. Aguarda todos os jogadores registados. 2. Para cada pergunta: a.
- * Envia pergunta a todos os clientes. b. Aguarda respostas (via
- * ModifiedCountDownLatch ou TeamBarrier). c. Calcula pontuações. d. Envia
- * placar a todos os clientes. 3. Envia resultado final e encerra.
+ * Configura o latch/barrier em cada DealWithClient. b. Envia a pergunta. c.
+ * Aguarda o latch/barrier (as respostas são processadas pelas threads dos
+ * próprios DealWithClient, sem workers extra). d. Envia placar. 3. Envia
+ * resultado final e encerra.
  */
 public class GameHandler extends Thread {
 
     private static final int QUESTION_TIME = 30; // segundos por pergunta
-    private static final int BONUS_FACTOR = 2;  // pontuação dobrada para os 2 primeiros
-    private static final int BONUS_COUNT = 2;  // número de jogadores com bónus
+    private static final int BONUS_FACTOR  = 2;  // pontuação dobrada para os 2 primeiros
+    private static final int BONUS_COUNT   = 2;  // número de jogadores com bónus
 
     private final GameState game;
+    private final Server server;
     private List<Question> questions;
 
-    public GameHandler(GameState game) {
-        this.game = game;
+    public GameHandler(GameState game, Server server) {
+        this.game   = game;
+        this.server = server;
         setDaemon(false);
     }
 
@@ -38,20 +41,17 @@ public class GameHandler extends Thread {
     public void run() {
         System.out.println("[GameHandler:" + game.getGameId() + "] Jogo iniciado!");
 
-        // Carrega e seleciona perguntas aleatoriamente
         List<Question> all = QuestionLoader.loadQuestions();
         Collections.shuffle(all);
         int n = Math.min(game.getNumQuestions(), all.size());
         questions = all.subList(0, n);
 
-        // Envia mensagem de início a todos
         broadcast(new Message(Message.Type.WAITING, "O jogo vai começar!"));
         pause(2000);
 
-        // Ciclo de perguntas
         for (int i = 0; i < questions.size(); i++) {
             Question q = questions.get(i);
-            boolean teamRound = (i % 2 == 1); // alterna: 0=individual, 1=equipa, ...
+            boolean teamRound = (i % 2 == 1);
 
             game.setCurrentQuestion(q, i, teamRound);
             game.getScoreManager().resetRound();
@@ -59,7 +59,14 @@ public class GameHandler extends Thread {
             System.out.println("[GameHandler] Pergunta " + (i + 1) + "/" + questions.size()
                     + (teamRound ? " [EQUIPA]" : " [INDIVIDUAL]"));
 
-            // Envia pergunta
+            // Configura o latch/barrier em cada DealWithClient ANTES de enviar a pergunta
+            if (teamRound) {
+                prepareTeamRound(q);
+            } else {
+                prepareIndividualRound(q);
+            }
+
+            // Envia a pergunta — a partir daqui os DealWithClients processam as respostas
             Message.QuestionMsg qMsg = new Message.QuestionMsg(
                     i + 1, questions.size(),
                     q.getQuestion(), q.getOptions(),
@@ -67,29 +74,34 @@ public class GameHandler extends Thread {
             );
             broadcast(new Message(Message.Type.QUESTION, qMsg));
 
-            // Processa respostas
+            // Aguarda fim da ronda (todos responderam ou tempo esgotado)
             if (teamRound) {
-                processTeamRound(q, i);
+                awaitTeamRound();
             } else {
-                processIndividualRound(q, i);
+                awaitIndividualRound();
             }
 
-            // Calcula e envia placar
+            // Limpa o contexto de ronda em todos os handlers
+            for (DealWithClient dwc : game.getAllHandlers()) {
+                dwc.clearRound();
+            }
+
+            // Envia placar
             Map<String, Integer> roundPts = game.getScoreManager().getRoundPoints();
             Map<String, Integer> totalPts = game.getTotalTeamScores();
 
-            // Determina melhor equipa na ronda
             String bestTeam = roundPts.entrySet().stream()
                     .max(Map.Entry.comparingByValue())
                     .map(Map.Entry::getKey).orElse("-");
 
-            Message.RoundResult result = new Message.RoundResult(
+            broadcast(new Message(Message.Type.ROUND_END, new Message.RoundResult(
                     q.getCorrect(), new HashMap<>(totalPts),
                     new HashMap<>(roundPts), bestTeam, false
-            );
-            broadcast(new Message(Message.Type.ROUND_END, result));
+            )));
 
-            pause(5000); // pausa entre rondas para o cliente mostrar o placar
+            if (i < questions.size() - 1) {
+                pause(5000);
+            }
         }
 
         // Fim do jogo
@@ -100,85 +112,58 @@ public class GameHandler extends Thread {
 
         System.out.println("[GameHandler:" + game.getGameId() + "] Fim do jogo! Vencedor: " + winner);
 
-        Message.RoundResult finalResult = new Message.RoundResult(
+        broadcast(new Message(Message.Type.GAME_END, new Message.RoundResult(
                 -1, new HashMap<>(finalScores),
                 Collections.emptyMap(), winner, true
-        );
-        broadcast(new Message(Message.Type.GAME_END, finalResult));
+        )));
 
-        // Encerra todos os handlers de clientes
         for (DealWithClient dwc : game.getAllHandlers()) {
             dwc.stopClient();
         }
 
-        Server.removeGame(game.getGameId());
+        server.removeGame(game.getGameId());
     }
 
     // -------------------------------------------------------
-    // Ronda individual: CountDownLatch modificado
+    // Ronda individual
     // -------------------------------------------------------
-    private void processIndividualRound(Question q, int questionIndex) {
-        int totalPlayers = game.getRegisteredCount();
 
-        ModifiedCountDownLatch latch = new ModifiedCountDownLatch(
-                BONUS_FACTOR, BONUS_COUNT, QUESTION_TIME, totalPlayers
+    // Guardado como campo para awaitIndividualRound() ter acesso
+    private ModifiedCountDownLatch currentLatch;
+
+    private void prepareIndividualRound(Question q) {
+        currentLatch = new ModifiedCountDownLatch(
+                BONUS_FACTOR, BONUS_COUNT, QUESTION_TIME, game.getRegisteredCount()
         );
-
-        // Para cada handler, lança uma thread de receção de resposta
-        List<Thread> workers = new ArrayList<>();
         for (DealWithClient dwc : game.getAllHandlers()) {
-            dwc.clearAnswer();
-            Thread t = new Thread(() -> {
-                try {
-                    int answerIdx = dwc.waitForAnswer();
-                    int factor = latch.countDown(); // regista e obtém fator
-
-                    boolean correct = (answerIdx == q.getCorrect());
-                    int pts = correct ? q.getPoints() * factor : 0;
-
-                    String team = game.getTeamOf(dwc.getUsername());
-                    if (pts > 0 && team != null) {
-                        game.getScoreManager().addRoundPoints(team, pts);
-                        game.addTeamScore(team, pts);
-                    }
-
-                    System.out.printf("  [Individual] %s respondeu %d (%s) -> %d pts (x%d)%n",
-                            dwc.getUsername(), answerIdx,
-                            correct ? "CERTO" : "ERRADO", pts, factor);
-
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            t.setDaemon(true);
-            t.start();
-            workers.add(t);
+            dwc.prepareIndividualRound(currentLatch);
         }
+    }
 
-        // Aguarda fim da ronda (todos responderam ou tempo esgotado)
+    private void awaitIndividualRound() {
         try {
-            latch.await();
+            currentLatch.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-
-        // Interrompe workers que ainda estejam bloqueados
-        workers.forEach(Thread::interrupt);
     }
 
     // -------------------------------------------------------
-    // Ronda de equipa: TeamBarrier
+    // Ronda de equipa
     // -------------------------------------------------------
-    private void processTeamRound(Question q, int questionIndex) {
-        Map<String, List<String>> teams = game.getTeams();
-        List<Thread> allWorkers = new ArrayList<>();
 
-        // Uma barreira por equipa
+    // Guardado como campo para awaitTeamRound() ter acesso
+    private final Object teamsLock = new Object();
+    private int teamsRemaining;
+
+    private void prepareTeamRound(Question q) {
+        Map<String, List<String>> teams = game.getTeams();
+        teamsRemaining = teams.size();
+
         for (Map.Entry<String, List<String>> entry : teams.entrySet()) {
             String teamName = entry.getKey();
             List<String> members = entry.getValue();
 
-            // Respostas da equipa nesta ronda
             Map<String, Integer> teamAnswers = new HashMap<>();
 
             TeamBarrier barrier = new TeamBarrier(
@@ -187,14 +172,14 @@ public class GameHandler extends Thread {
                         // barrierAction: calcula pontuação da equipa
                         int correct = q.getCorrect();
                         boolean allCorrect = !teamAnswers.isEmpty()
-                        && teamAnswers.values().stream().allMatch(a -> a == correct);
+                                && teamAnswers.values().stream().allMatch(a -> a == correct);
 
-                        int pts = 0;
+                        int pts;
                         if (allCorrect) {
-                            pts = q.getPoints() * 2; // bónus equipa completa
+                            pts = q.getPoints() * 2;
                         } else {
-                            // conta só os que acertaram individualmente
-                            long nCorrect = teamAnswers.values().stream().filter(a -> a == correct).count();
+                            long nCorrect = teamAnswers.values().stream()
+                                    .filter(a -> a == correct).count();
                             pts = (int) (nCorrect * q.getPoints());
                         }
 
@@ -204,47 +189,41 @@ public class GameHandler extends Thread {
                         }
                         System.out.printf("  [Equipa] %s: allCorrect=%b pts=%d%n",
                                 teamName, allCorrect, pts);
+
+                        // Notifica o GameHandler que esta equipa terminou
+                        synchronized (teamsLock) {
+                            teamsRemaining--;
+                            if (teamsRemaining <= 0) {
+                                teamsLock.notifyAll();
+                            }
+                        }
                     }
             );
 
-            // Thread por jogador da equipa
+            // Configura cada DealWithClient da equipa com a barreira partilhada
             for (String username : members) {
                 DealWithClient dwc = findHandler(username);
-                if (dwc == null) {
-                    continue;
+                if (dwc != null) {
+                    dwc.prepareTeamRound(barrier, teamAnswers);
                 }
-                dwc.clearAnswer();
-
-                Thread t = new Thread(() -> {
-                    try {
-                        int answerIdx = dwc.waitForAnswer();
-                        synchronized (teamAnswers) {
-                            teamAnswers.put(username, answerIdx);
-                        }
-                        barrier.arrive();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        try {
-                            barrier.arrive();
-                        } catch (InterruptedException ignored) {
-                        }
-                    }
-                });
-                t.setDaemon(true);
-                t.start();
-                allWorkers.add(t);
             }
         }
+    }
 
-        // Aguarda todas as barreiras libertadas (o tempo máximo é gerido pelas barreiras)
-        // Aguardamos o QUESTION_TIME + margem
-        try {
-            Thread.sleep((QUESTION_TIME + 2) * 1000L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+    private void awaitTeamRound() {
+        synchronized (teamsLock) {
+            long deadline = System.currentTimeMillis() + (QUESTION_TIME + 2) * 1000L;
+            while (teamsRemaining > 0) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                try {
+                    teamsLock.wait(remaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
-
-        allWorkers.forEach(Thread::interrupt);
     }
 
     // -------------------------------------------------------
@@ -252,9 +231,7 @@ public class GameHandler extends Thread {
     // -------------------------------------------------------
     private DealWithClient findHandler(String username) {
         for (DealWithClient dwc : game.getAllHandlers()) {
-            if (dwc.getUsername().equals(username)) {
-                return dwc;
-            }
+            if (dwc.getUsername().equals(username)) return dwc;
         }
         return null;
     }
